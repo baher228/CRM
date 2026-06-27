@@ -55,6 +55,10 @@ async def _run_job(job_id: str, request: DiscoveryRunRequest) -> None:
             region=request.region,
             limit=request.limit,
             dry_run=request.dry_run,
+            portals=request.portals,
+            deadline_window=request.deadline_window,
+            minimum_value=request.minimum_value,
+            open_notices_only=request.open_notices_only,
             progress_callback=lambda event: update_discovery_job(job_id, event),
         )
         add_discovered_leads(response.results)
@@ -147,6 +151,9 @@ def _elapsed(job_id: str) -> float:
 
 
 def _result_key(result: DiscoveryCompanyResult) -> str:
+    dedupe_key = getattr(result, "dedupe_key", "")
+    if dedupe_key:
+        return dedupe_key
     if result.contract_url:
         return result.contract_url
     if result.source_urls:

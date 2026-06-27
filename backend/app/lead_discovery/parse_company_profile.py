@@ -1,5 +1,6 @@
 import json
 from typing import Any
+from urllib.parse import urlparse
 
 from app.lead_discovery.domain import normalize_domain
 from app.lead_discovery.models import CompanyProfile, ExtractedCompanyPage
@@ -22,6 +23,9 @@ COMPANY_PROFILE_SCHEMA: dict[str, Any] = {
         "contract_status": {"type": "string"},
         "buyer_website": {"type": "string"},
         "buyer_contact": {"type": "string"},
+        "contact_name": {"type": "string"},
+        "contact_email": {"type": "string"},
+        "contact_phone": {"type": "string"},
         "cpv_codes": {"type": "array", "items": {"type": "string"}},
         "location": {"type": "string"},
         "services": {"type": "array", "items": {"type": "string"}},
@@ -48,6 +52,9 @@ COMPANY_PROFILE_SCHEMA: dict[str, Any] = {
         "contract_status",
         "buyer_website",
         "buyer_contact",
+        "contact_name",
+        "contact_email",
+        "contact_phone",
         "cpv_codes",
         "location",
         "services",
@@ -74,7 +81,7 @@ async def parseCompanyProfile(
     payload = await gemini_client.generate_json(prompt, COMPANY_PROFILE_SCHEMA)
     source_url = next((page.url for page in pages if not page.failed), "")
     payload["portal_domain"] = _clean_unknown(payload.get("portal_domain")) or domain
-    payload["contract_url"] = _clean_unknown(payload.get("contract_url")) or source_url
+    payload["contract_url"] = _best_contract_url(payload.get("contract_url"), source_url)
     payload["buyer_name"] = _clean_unknown(payload.get("buyer_name")) or payload.get("company_name") or "Unknown"
     payload["contract_title"] = _clean_unknown(payload.get("contract_title")) or payload["buyer_name"]
     payload["company_name"] = (
@@ -116,8 +123,12 @@ Important extraction rules:
 - domain should be the buyer website domain when explicit evidence is available.
 - If no buyer website is present, use the portal domain as domain.
 - contract_url must be the exact source notice URL where the opportunity was found.
+- deadline must be the tender submission/response deadline when visible, not an award date.
+- contract_status must say whether the notice is open, active, closed, awarded, cancelled, withdrawn, expired, or unknown.
 - portal_name and portal_domain identify the tender portal.
 - outreach_angle should explain why this opportunity matches the searched niche.
+- contact_name, contact_email, and contact_phone should be extracted from the notice when visible.
+- buyer_contact can be a compact combined contact string for display, but never invent contact details.
 
 Contract search niche: {niche}
 Search region: {region or "None"}
@@ -146,3 +157,18 @@ def _clean_unknown(value: Any) -> str:
     if not normalized or normalized.lower() in {"unknown", "n/a", "none", "not available"}:
         return ""
     return normalized
+
+
+def _best_contract_url(parsed_url: Any, source_url: str) -> str:
+    parsed = _clean_unknown(parsed_url)
+    if parsed and not _is_search_results_url(parsed):
+        return parsed
+    if source_url and not _is_search_results_url(source_url):
+        return source_url
+    return parsed or source_url
+
+
+def _is_search_results_url(value: str) -> bool:
+    parsed = urlparse(value if "://" in value else f"https://{value}")
+    path = parsed.path.lower()
+    return path.startswith("/search/") or path in {"/search", "/search/results"}

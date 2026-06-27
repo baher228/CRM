@@ -8,6 +8,7 @@ from app.lead_discovery.models import (
     DiscoveryRunResponse,
 )
 from app.lead_discovery.runner import run_discovery
+from app.services.leads_service import add_discovered_leads
 
 
 router = APIRouter()
@@ -30,11 +31,17 @@ async def get_discovery_job_route(job_id: str) -> DiscoveryJobStatusResponse:
 @router.post("/discovery/run", response_model=DiscoveryRunResponse)
 async def run_discovery_route(request: DiscoveryRunRequest) -> DiscoveryRunResponse:
     try:
-        return await run_discovery(
+        response = await run_discovery(
             niche=request.niche,
             region=request.region,
             limit=request.limit,
             dry_run=request.dry_run,
+            portals=request.portals,
+            deadline_window=request.deadline_window,
+            minimum_value=request.minimum_value,
+            open_notices_only=request.open_notices_only,
         )
+        add_discovered_leads(response.results)
+        return response
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

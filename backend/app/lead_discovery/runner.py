@@ -17,6 +17,8 @@ from app.lead_enrichment.clients.attio_client import AttioClient
 from app.lead_enrichment.clients.gemini_client import GeminiClient
 from app.lead_enrichment.clients.tavily_client import TavilyClient
 from app.lead_enrichment.logging import configure_logging, log_event
+from app.services.contract_availability import assess_contract_availability
+from app.services.leads_service import discovery_key_for_url, known_discovery_keys
 
 
 async def run_discovery(
@@ -24,6 +26,10 @@ async def run_discovery(
     region: str | None = None,
     limit: int | None = None,
     dry_run: bool = True,
+    portals: list[str] | None = None,
+    deadline_window: str = "",
+    minimum_value: str = "",
+    open_notices_only: bool = True,
     progress_callback: Callable[[dict], Awaitable[None]] | None = None,
 ) -> DiscoveryRunResponse:
     configure_logging()
@@ -45,16 +51,42 @@ async def run_discovery(
         raw_candidates = await searchCompaniesWithTavily(
             niche,
             region,
-            requested_limit,
+            max(requested_limit * 3, requested_limit + 10),
             settings,
             tavily_client,
+            portals=portals or [],
+            deadline_window=deadline_window,
+            minimum_value=minimum_value,
+            open_notices_only=open_notices_only,
         )
-        candidates = raw_candidates[:requested_limit]
+        known_keys = known_discovery_keys()
+        candidates = []
+        skipped_results = []
+        for candidate in raw_candidates:
+            candidate_key = _candidate_known_key(candidate)
+            if candidate_key and candidate_key in known_keys:
+                result = DiscoveryCompanyResult(
+                    domain=candidate.domain,
+                    company_name="Already saved",
+                    status="skipped",
+                    message="Already in Leads",
+                    source_urls=[item.url for item in candidate.urls],
+                    portal_name=candidate.portal_name or "Unknown",
+                    portal_domain=candidate.domain,
+                    contract_url=candidate.urls[0].url if candidate.urls else "",
+                    dedupe_key=candidate_key,
+                )
+                skipped_results.append(result)
+                await _publish(progress_callback, phase="searching", message="Already in Leads", result=result)
+                continue
+            candidates.append(candidate)
+            if len(candidates) >= requested_limit:
+                break
         await _publish(
             progress_callback,
             phase="searching",
             message=f"Found {len(candidates)} candidate contract notices",
-            total=len(candidates),
+            total=len(candidates) + len(skipped_results),
         )
         for candidate in candidates:
             await _publish_result(
@@ -97,8 +129,9 @@ async def run_discovery(
                 logRunResult(result)
                 return result
 
-        results = await asyncio.gather(*(run_one(candidate) for candidate in candidates))
-        return _response(dry_run, niche, region, requested_limit, len(candidates), results)
+        parsed_results = await asyncio.gather(*(run_one(candidate) for candidate in candidates))
+        results = [*skipped_results, *parsed_results]
+        return _response(dry_run, niche, region, requested_limit, len(results), results)
     finally:
         await attio_client.close()
         await tavily_client.close()
@@ -146,6 +179,24 @@ async def _run_candidate(
             gemini_client,
         )
         profile.source_urls = profile.source_urls or extracted_source_urls
+        availability = assess_contract_availability(
+            profile.deadline,
+            profile.contract_status,
+            profile.procurement_stage,
+            profile.outreach_angle,
+        )
+        profile.availability_status = availability.status
+        profile.availability_reason = availability.reason
+        profile.availability_checked_at = availability.checked_at.isoformat()
+        if availability.status == "Unavailable":
+            result = _result_from_profile(
+                profile,
+                "skipped",
+                f"Contract no longer appears available: {availability.reason}",
+                profile.source_urls,
+            )
+            await _publish(progress_callback, phase="parsing", message=result.message, result=result)
+            return result
         fingerprint = compute_discovery_fingerprint(
             niche,
             region,
@@ -171,6 +222,10 @@ async def _run_candidate(
             contract_value=profile.contract_value,
             deadline=profile.deadline,
             procurement_stage=profile.procurement_stage,
+            contract_status=profile.contract_status,
+            availability_status=profile.availability_status,
+            availability_reason=profile.availability_reason,
+            availability_checked_at=profile.availability_checked_at,
         )
         try:
             message, _record_id = await upsertCompanyToAttio(summary, settings, attio_client, dry_run)
@@ -207,6 +262,15 @@ async def _publish_result(
     contract_value: str = "Unknown",
     deadline: str = "Unknown",
     procurement_stage: str = "Unknown",
+    contract_status: str = "Unknown",
+    availability_status: str = "Unverified",
+    availability_reason: str = "",
+    availability_checked_at: str = "",
+    buyer_website: str = "",
+    buyer_contact: str = "Unknown",
+    contact_name: str = "",
+    contact_email: str = "",
+    contact_phone: str = "",
 ) -> None:
     await _publish(
         progress_callback,
@@ -227,6 +291,15 @@ async def _publish_result(
             contract_value=contract_value,
             deadline=deadline,
             procurement_stage=procurement_stage,
+            contract_status=contract_status,
+            availability_status=availability_status,
+            availability_reason=availability_reason,
+            availability_checked_at=availability_checked_at,
+            buyer_website=buyer_website,
+            buyer_contact=buyer_contact,
+            contact_name=contact_name,
+            contact_email=contact_email,
+            contact_phone=contact_phone,
         ),
     )
 
@@ -260,7 +333,24 @@ def _result_from_profile(
         contract_value=profile.contract_value,
         deadline=profile.deadline,
         procurement_stage=profile.procurement_stage,
+        contract_status=profile.contract_status,
+        availability_status=profile.availability_status,
+        availability_reason=profile.availability_reason,
+        availability_checked_at=profile.availability_checked_at,
+        buyer_website=profile.buyer_website,
+        buyer_contact=profile.buyer_contact,
+        contact_name=profile.contact_name,
+        contact_email=profile.contact_email,
+        contact_phone=profile.contact_phone,
     )
+
+
+def _candidate_known_key(candidate) -> str:
+    for item in candidate.urls:
+        key = discovery_key_for_url(item.url)
+        if key:
+            return key
+    return ""
 
 
 def _response(

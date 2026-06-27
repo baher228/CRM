@@ -48,6 +48,7 @@ class EnrichmentSettings(BaseSettings):
     enrichment_create_tasks: bool = True
     enrichment_task_urgency_threshold: int = 75
     enrichment_default_limit: int = Field(default=10, ge=1, le=100)
+    crm_include_demo_leads: bool = False
 
     discovery_parser_version: str = "gemini-discovery-v1"
     discovery_default_limit: int = Field(default=10, ge=1, le=100)
@@ -77,6 +78,10 @@ class EnrichmentSettings(BaseSettings):
             missing.append("GEMINI_API_KEY")
         if missing:
             raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+
+    def require_attio_key(self) -> None:
+        if _is_placeholder(self.attio_api_token):
+            raise ValueError("Missing required environment variables: ATTIO_API_TOKEN")
 
     def require_discovery_keys(self) -> None:
         missing = []

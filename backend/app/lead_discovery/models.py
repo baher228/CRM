@@ -50,8 +50,18 @@ class CompanyProfile(BaseModel):
     deadline: str = "Unknown"
     procurement_stage: str = "Unknown"
     contract_status: str = "Unknown"
+    availability_status: str = "Unverified"
+    availability_reason: str = ""
+    availability_checked_at: str = ""
     buyer_website: str = ""
     buyer_contact: str = "Unknown"
+    contact_name: str = ""
+    contact_email: str = ""
+    contact_phone: str = ""
+    priority_score: int = Field(default=0, ge=0, le=100)
+    priority_label: str = "Low"
+    priority_reasons: list[str] = Field(default_factory=list)
+    dedupe_key: str = ""
     cpv_codes: list[str] = Field(default_factory=list)
     location: str = "Unknown"
     services: list[str] = Field(default_factory=list)
@@ -88,6 +98,10 @@ class DiscoveryRunRequest(BaseModel):
     region: str | None = Field(default=None, max_length=120)
     limit: int = Field(default=10, ge=1, le=100)
     dry_run: bool = True
+    portals: list[str] = Field(default_factory=list)
+    deadline_window: str = ""
+    minimum_value: str = ""
+    open_notices_only: bool = True
 
 
 DiscoveryPhase = Literal["queued", "searching", "extracting", "parsing", "syncing", "completed", "failed"]
@@ -118,6 +132,19 @@ class DiscoveryCompanyResult(BaseModel):
     contract_value: str = "Unknown"
     deadline: str = "Unknown"
     procurement_stage: str = "Unknown"
+    contract_status: str = "Unknown"
+    availability_status: str = "Unverified"
+    availability_reason: str = ""
+    availability_checked_at: str = ""
+    buyer_website: str = ""
+    buyer_contact: str = "Unknown"
+    contact_name: str = ""
+    contact_email: str = ""
+    contact_phone: str = ""
+    priority_score: int = Field(default=0, ge=0, le=100)
+    priority_label: str = "Low"
+    priority_reasons: list[str] = Field(default_factory=list)
+    dedupe_key: str = ""
 
 
 class DiscoveryRunResponse(BaseModel):
