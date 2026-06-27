@@ -1,0 +1,61 @@
+{
+  "name": "Daybreak Morning Briefing",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * *"
+            }
+          ]
+        }
+      },
+      "id": "e44d326c-d232-4fdb-8935-8cf6a8a7de4a",
+      "name": "6 AM Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/api/briefing/generate",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "{\"n8n_triggered\": true}",
+        "options": {}
+      },
+      "id": "06526ab5-19e0-466d-a78b-0805e4fc7648",
+      "name": "Trigger Daybreak API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        440,
+        240
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "6 AM Schedule": {
+      "main": [
+        [
+          {
+            "node": "Trigger Daybreak API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "fba0401b-c12e-4091-a67b-15f5d817b1ff"
+}
