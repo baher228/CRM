@@ -7,6 +7,14 @@ A lightweight CRM каркас with a FastAPI backend and React Vite frontend.
 - `backend/` - FastAPI app with dummy in-memory API data.
 - `frontend/` - React Vite app with CRM tabs.
 
+Backend modules:
+
+- `backend/app/main.py` - app setup, CORS, and router registration.
+- `backend/app/schemas.py` - Pydantic models and enums.
+- `backend/app/data.py` - dummy in-memory records.
+- `backend/app/routes/` - thin FastAPI route modules.
+- `backend/app/services/` - simple service functions for each CRM area.
+
 ## Backend
 
 ```powershell
