@@ -1,6 +1,7 @@
 from datetime import date
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from app.data import CLIENTS
@@ -35,7 +36,7 @@ async def create_client(request: ClientCreateRequest) -> Client:
                 response = await attio_client.upsert_record(
                     settings.attio_person_object,
                     settings.attio_person_email_attribute,
-                    _person_values(request),
+                    _person_values(request, settings),
                 )
                 attio_person_record_id = record_id_from_response(response)
                 sync_message = "Saved locally; Attio person upserted"
@@ -64,11 +65,34 @@ async def create_client(request: ClientCreateRequest) -> Client:
     return client
 
 
-def _person_values(request: ClientCreateRequest) -> dict[str, Any]:
-    values: dict[str, Any] = {"email_addresses": [str(request.email)]}
+def _person_values(request: ClientCreateRequest, settings: EnrichmentSettings) -> dict[str, Any]:
+    values: dict[str, Any] = {settings.attio_person_email_attribute: [str(request.email)]}
     if request.name.strip():
-        values["name"] = request.name.strip()
+        values[settings.attio_person_name_attribute] = [_attio_person_name(request.name)]
+    if request.phone.strip():
+        values[settings.attio_person_phone_attribute] = [_attio_phone_number(request.phone, settings)]
     return values
+
+
+def _attio_person_name(name: str) -> dict[str, str]:
+    parts = [part for part in re.split(r"\s+", name.strip()) if part]
+    if not parts:
+        return {"first_name": "", "last_name": "", "full_name": ""}
+    if len(parts) == 1:
+        return {"first_name": parts[0], "last_name": "", "full_name": parts[0]}
+    return {
+        "first_name": " ".join(parts[:-1]),
+        "last_name": parts[-1],
+        "full_name": " ".join(parts),
+    }
+
+
+def _attio_phone_number(phone: str, settings: EnrichmentSettings) -> dict[str, str]:
+    cleaned = re.sub(r"\s+", " ", phone.strip())
+    value = {"original_phone_number": cleaned}
+    if not cleaned.startswith("+"):
+        value["country_code"] = settings.attio_default_phone_country_code
+    return value
 
 
 def _next_client_id(manual_clients: list[Client]) -> int:

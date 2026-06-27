@@ -14,7 +14,11 @@ class EnrichmentSettings(BaseSettings):
 
     attio_company_name_attribute: str = "name"
     attio_company_domain_attribute: str = "domains"
+    attio_person_name_attribute: str = "name"
     attio_person_email_attribute: str = "email_addresses"
+    attio_person_phone_attribute: str = "phone_numbers"
+    attio_person_company_attribute: str = "company"
+    attio_default_phone_country_code: str = "GB"
     attio_enrichment_summary_attribute: str = "lead_enrichment_summary"
     attio_fit_score_attribute: str = "lead_fit_score"
     attio_urgency_score_attribute: str = "lead_urgency_score"

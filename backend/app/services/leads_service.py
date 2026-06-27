@@ -155,7 +155,7 @@ async def _confirm_with_attio(lead: Lead) -> Lead:
                 person_response = await attio_client.upsert_record(
                     settings.attio_person_object,
                     settings.attio_person_email_attribute,
-                    _person_values(working_lead),
+                    _person_values(working_lead, settings, company_record_id),
                 )
                 person_record_id = record_id_from_response(person_response)
                 messages.append("Attio person upserted")
@@ -172,6 +172,15 @@ async def _confirm_with_attio(lead: Lead) -> Lead:
                         company_record_id,
                         "Draft outreach email",
                         _draft_email_note(draft_email_subject, draft_email_body),
+                        messages,
+                    )
+                if person_record_id:
+                    await _safe_create_note(
+                        attio_client,
+                        settings.attio_person_object,
+                        person_record_id,
+                        "Tender contact context",
+                        _lead_summary(working_lead),
                         messages,
                     )
             except ApiClientError as exc:
@@ -494,15 +503,53 @@ def _priority_label(score: int) -> str:
 
 
 def _company_values(lead: Lead) -> dict[str, Any]:
-    return {
-        "name": lead.company or lead.buyer_name or lead.name,
-        "domains": [_company_domain(lead)],
+    values: dict[str, Any] = {
+        "name": _first_known(lead.buyer_name, lead.company, lead.name) or "Unknown buyer",
         "description": _lead_summary(lead),
+    }
+    domain = _company_domain(lead)
+    if _is_known(domain):
+        values["domains"] = [domain]
+    return values
+
+
+def _person_values(lead: Lead, settings: EnrichmentSettings, company_record_id: str | None = None) -> dict[str, Any]:
+    values: dict[str, Any] = {
+        settings.attio_person_email_attribute: [str(lead.contact_email)],
+    }
+    if _is_known(lead.contact_name):
+        values[settings.attio_person_name_attribute] = [_attio_person_name(lead.contact_name)]
+    if _is_known(lead.contact_phone):
+        values[settings.attio_person_phone_attribute] = [_attio_phone_number(lead.contact_phone, settings)]
+    if company_record_id:
+        values[settings.attio_person_company_attribute] = [
+            {
+                "target_object": settings.attio_company_object,
+                "target_record_id": company_record_id,
+            }
+        ]
+    return values
+
+
+def _attio_person_name(name: str) -> dict[str, str]:
+    parts = [part for part in re.split(r"\s+", name.strip()) if part]
+    if not parts:
+        return {"first_name": "", "last_name": "", "full_name": ""}
+    if len(parts) == 1:
+        return {"first_name": parts[0], "last_name": "", "full_name": parts[0]}
+    return {
+        "first_name": " ".join(parts[:-1]),
+        "last_name": parts[-1],
+        "full_name": " ".join(parts),
     }
 
 
-def _person_values(lead: Lead) -> dict[str, Any]:
-    return {"email_addresses": [str(lead.contact_email)]}
+def _attio_phone_number(phone: str, settings: EnrichmentSettings) -> dict[str, str]:
+    cleaned = re.sub(r"\s+", " ", phone.strip())
+    value = {"original_phone_number": cleaned}
+    if not cleaned.startswith("+"):
+        value["country_code"] = settings.attio_default_phone_country_code
+    return value
 
 
 def _draft_email_note(subject: str, body: str) -> str:
@@ -609,9 +656,11 @@ def _is_persistable_result(result: DiscoveryCompanyResult) -> bool:
 
 def _company_domain(lead: Lead) -> str:
     for candidate in (lead.company_domain, lead.buyer_website):
-        if candidate:
+        if _is_known(candidate):
             return _domain_from_value(candidate)
-    return _domain_from_value(lead.website)
+    if _is_known(lead.website):
+        return _domain_from_value(lead.website)
+    return ""
 
 
 def _canonical_url_key(value: str) -> str:
@@ -645,6 +694,10 @@ def _slug(value: str) -> str:
 
 def _is_known(value: Any) -> bool:
     return bool(value and str(value).strip() and str(value).strip().lower() not in {"unknown", "n/a", "none", "-"})
+
+
+def _first_known(*values: Any) -> Any:
+    return next((value for value in values if _is_known(value)), None)
 
 
 def _best_value(current: Any, incoming: Any) -> Any:
