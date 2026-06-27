@@ -523,6 +523,11 @@ function LeadsView({ rows, onLeadUpdated }) {
               </button>
             </div>
           ) : null}
+          {(selectedLead.status === "Confirmed" || selectedLead.confirmed_at) && selectedLead.contact_email ? (
+            <button className="secondary-action" disabled={busyLeadId === selectedLead.id} onClick={() => runAction(selectedLead, "confirm")} type="button">
+              Sync contact
+            </button>
+          ) : null}
         </div>
 
         {actionError ? <div className="state state-error compact-state">{actionError}</div> : null}
