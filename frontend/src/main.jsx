@@ -19,6 +19,10 @@ import {
   Shield,
   TrendingUp,
   AlertTriangle,
+  Clock,
+  Inbox,
+  Target,
+  PoundSterling,
 } from "lucide-react";
 import {
   confirmLead,
@@ -1513,12 +1517,44 @@ function BriefingView() {
   const [error, setError] = useState("");
   const [approving, setApproving] = useState({});
   const [approved, setApproved] = useState({});
+  const [pulse, setPulse] = useState({ clients: [], leads: [], calendar: [], emails: [] });
 
   useEffect(() => {
     getLatestBriefing().then((data) => {
       if (data && data.items) setBriefing(data);
     });
+    // Pull live data from across the CRM (partner's endpoints) for the dashboard.
+    Promise.all([
+      fetchResource("clients").catch(() => []),
+      fetchResource("leads").catch(() => []),
+      fetchResource("calendar").catch(() => []),
+      fetchResource("emails").catch(() => []),
+    ]).then(([clients, leads, calendar, emails]) => {
+      setPulse({
+        clients: clients || [],
+        leads: leads || [],
+        calendar: calendar || [],
+        emails: emails || [],
+      });
+    });
   }, []);
+
+  const pipelineValue = pulse.clients.reduce((sum, c) => sum + (c.value || 0), 0);
+  const unreadEmails = pulse.emails.filter((e) => e.unread).length;
+  const upcomingMeetings = [...pulse.calendar].sort((a, b) =>
+    `${a.date} ${a.start_time}`.localeCompare(`${b.date} ${b.start_time}`)
+  );
+  const attentionEmails = pulse.emails
+    .filter((e) => e.unread || e.priority === "High")
+    .slice(0, 3);
+
+  const stats = [
+    { key: "pipeline", label: "Pipeline value", value: formatCurrency(pipelineValue), icon: PoundSterling, tone: "green" },
+    { key: "clients", label: "Active clients", value: pulse.clients.length, icon: Users, tone: "blue" },
+    { key: "leads", label: "Tender leads", value: pulse.leads.length, icon: Target, tone: "purple" },
+    { key: "meetings", label: "Upcoming meetings", value: pulse.calendar.length, icon: Clock, tone: "yellow" },
+    { key: "inbox", label: "Unread emails", value: unreadEmails, icon: Inbox, tone: unreadEmails > 0 ? "red" : "green" },
+  ];
 
   const handleGenerate = async () => {
     setLoading(true);
@@ -1570,6 +1606,60 @@ function BriefingView() {
         <span className="integration-chip n8n">⚡ n8n</span>
         <span className="integration-chip superlinked disabled">◇ Superlinked</span>
         <span className="integration-chip slng disabled">🔊 SLNG</span>
+      </div>
+
+      <div className="briefing-stats">
+        {stats.map((stat) => {
+          const Icon = stat.icon;
+          return (
+            <div className={`stat-card stat-${stat.tone}`} key={stat.key}>
+              <div className="stat-icon"><Icon size={18} /></div>
+              <div className="stat-body">
+                <span className="stat-value">{stat.value}</span>
+                <span className="stat-label">{stat.label}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="briefing-today">
+        <section className="today-panel">
+          <div className="today-panel-head"><Clock size={15} /> Today &amp; upcoming</div>
+          {upcomingMeetings.length === 0 ? (
+            <p className="today-empty">No meetings scheduled.</p>
+          ) : (
+            <ul className="today-list">
+              {upcomingMeetings.slice(0, 3).map((m) => (
+                <li key={m.id}>
+                  <span className="today-time">{formatDate(m.date)} · {m.start_time.slice(0, 5)}</span>
+                  <span className="today-title">{m.title}</span>
+                  <span className="today-sub">{m.related_to}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="today-panel">
+          <div className="today-panel-head"><Inbox size={15} /> Needs attention</div>
+          {attentionEmails.length === 0 ? (
+            <p className="today-empty">Inbox is clear.</p>
+          ) : (
+            <ul className="today-list">
+              {attentionEmails.map((e) => (
+                <li key={e.id}>
+                  <span className="today-title">
+                    {e.subject}
+                    {e.priority === "High" && <StatusBadge tone="red">High</StatusBadge>}
+                    {e.unread && <span className="today-dot" />}
+                  </span>
+                  <span className="today-sub">{e.from_name} — {e.preview}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </div>
 
       {loading && (
