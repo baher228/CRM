@@ -9,3 +9,4 @@ frontend/dist/
 frontend/*.log
 
 .playwright-cli/
+.env
