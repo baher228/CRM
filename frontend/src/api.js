@@ -34,25 +34,6 @@ export async function fetchDiscoveryJob(jobId) {
   return fetchResource(`discovery/jobs/${jobId}`);
 }
 
-export async function generateBriefing(payload = {}) {
-  return postResource("briefing/generate", payload);
-}
-
-export async function getLatestBriefing() {
-  const response = await fetch(`${API_BASE_URL}/briefing/latest`);
-  if (!response.ok) {
-    return null;
-  }
-  return response.json();
-}
-
-export async function approveAction(itemIndex, actionText = null) {
-  return postResource("briefing/approve", {
-    item_index: itemIndex,
-    action_text: actionText,
-  });
-}
-
 async function getErrorMessage(response, fallback) {
   try {
     const payload = await response.json();
