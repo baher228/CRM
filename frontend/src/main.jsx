@@ -5,6 +5,7 @@ import {
   CalendarDays,
   Mail,
   Megaphone,
+  Send,
   UserPlus,
   Search,
   Users,
@@ -119,6 +120,28 @@ const isBadSourceUrl = (url) => {
 const isKnown = (value) => Boolean(value && String(value).trim() && String(value).trim() !== "Unknown");
 const showValue = (value, fallback = "-") => (isKnown(value) ? value : fallback);
 const firstKnown = (...values) => values.find((value) => isKnown(value));
+
+const formatDraftEmailBody = (body) => {
+  const cleaned = String(body || "").trim();
+  if (!cleaned) {
+    return "";
+  }
+  if (/\bArdivia\b/i.test(cleaned)) {
+    return cleaned;
+  }
+  if (/Best,\s*$/i.test(cleaned)) {
+    return cleaned.replace(/Best,\s*$/i, "Best,\nArdivia");
+  }
+  return `${cleaned}\n\nBest,\nArdivia`;
+};
+
+const draftEmailHref = (lead, body) => {
+  if (!lead.contact_email || (!lead.draft_email_subject && !body)) {
+    return "";
+  }
+  const subject = encodeURIComponent(lead.draft_email_subject || "Following up on your tender");
+  return `mailto:${lead.contact_email}?subject=${subject}&body=${encodeURIComponent(body)}`;
+};
 
 const priorityTone = (label) =>
   ({ Hot: "red", Warm: "green", Watch: "yellow", Low: "blue" })[label] || "blue";
@@ -476,6 +499,8 @@ function LeadsView({ rows, onLeadUpdated }) {
       ? [selectedLead.contact_source_url, leadUrl(selectedLead), ...selectedLead.source_urls]
       : [selectedLead.contact_source_url, leadUrl(selectedLead)]
     ).filter((url, index, all) => url && !isBadSourceUrl(url) && all.indexOf(url) === index);
+    const draftBody = formatDraftEmailBody(selectedLead.draft_email_body);
+    const draftHref = draftEmailHref(selectedLead, draftBody);
 
     return (
       <div className="tender-review-page">
@@ -598,20 +623,35 @@ function LeadsView({ rows, onLeadUpdated }) {
               </div>
             </dl>
           </section>
-          <section>
-            <h3>Attio sync</h3>
-            <p>{selectedLead.last_sync_message || "Not synced yet"}</p>
-          </section>
           <section className="draft-email-section">
-            <h3>Draft email</h3>
+            <div className="draft-email-header">
+              <h3>Draft email</h3>
+              {selectedLead.draft_email_subject || draftBody ? (
+                draftHref ? (
+                  <a className="confirm-action action-with-icon" href={draftHref}>
+                    <Send size={15} aria-hidden="true" />
+                    Send draft
+                  </a>
+                ) : (
+                  <button className="confirm-action action-with-icon" disabled type="button">
+                    <Send size={15} aria-hidden="true" />
+                    Send draft
+                  </button>
+                )
+              ) : null}
+            </div>
             {selectedLead.draft_email_subject || selectedLead.draft_email_body ? (
               <div className="draft-email">
                 <strong>{selectedLead.draft_email_subject || "No subject generated"}</strong>
-                <p>{selectedLead.draft_email_body || "No body generated"}</p>
+                <p>{draftBody || "No body generated"}</p>
               </div>
             ) : (
               <p>Confirm this lead with a contact to generate a draft email.</p>
             )}
+          </section>
+          <section>
+            <h3>Attio sync</h3>
+            <p>{selectedLead.last_sync_message || "Not synced yet"}</p>
           </section>
           <section>
             <h3>Sources</h3>

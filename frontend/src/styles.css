@@ -415,6 +415,18 @@ td span {
   margin: 0;
 }
 
+.draft-email-header {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin: 0 0 12px;
+}
+
+.draft-email-header h3 {
+  margin: 0;
+}
+
 .draft-email {
   display: grid;
   gap: 10px;

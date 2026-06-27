@@ -7,6 +7,8 @@ from app.lead_enrichment.config import EnrichmentSettings
 from app.schemas import Lead
 
 
+COMPANY_SIGNATURE = "Best,\nArdivia"
+
 DRAFT_EMAIL_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -45,7 +47,7 @@ Use only the lead facts below. Keep the body under 170 words.
 
 Return JSON with:
 - subject: short email subject line, no "Subject:" prefix
-- body: plain text email body with greeting, short reason for reaching out, one clear next step, and sign-off placeholder "Best,"
+- body: plain text email body with greeting, short reason for reaching out, one clear next step, and sign-off "Best,\nArdivia"
 
 Lead facts:
 Contact name: {contact_name}
@@ -71,7 +73,17 @@ def _clean_subject(value: str) -> str:
 
 def _clean_body(value: str) -> str:
     body = str(value or "").strip()
-    return body or "Hi,\n\nI wanted to follow up on this opportunity and see who would be best to speak with.\n\nBest,"
+    if not body:
+        return (
+            "Hi,\n\n"
+            "I wanted to follow up on this opportunity and see who would be best to speak with.\n\n"
+            f"{COMPANY_SIGNATURE}"
+        )
+    if "ardivia" in body.lower():
+        return body
+    if body.lower().endswith("best,"):
+        return f"{body}\nArdivia"
+    return f"{body}\n\n{COMPANY_SIGNATURE}"
 
 
 def _require_gemini_key(settings: EnrichmentSettings) -> None:
