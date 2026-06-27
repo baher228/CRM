@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import calendar, clients, discovery, emails, enrichment, events, health, leads
+from app.routes import briefing, calendar, clients, discovery, emails, enrichment, events, health, leads
 
 
 app = FastAPI(title="CRM Scaffold API", version="0.1.0")
@@ -26,3 +26,4 @@ app.include_router(emails.router, prefix="/api", tags=["emails"])
 app.include_router(calendar.router, prefix="/api", tags=["calendar"])
 app.include_router(enrichment.router, prefix="/api", tags=["enrichment"])
 app.include_router(discovery.router, prefix="/api", tags=["discovery"])
+app.include_router(briefing.router, prefix="/api", tags=["briefing"])
