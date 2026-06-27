@@ -6,11 +6,21 @@ import {
   Megaphone,
   Users,
   WalletCards,
+  Sunrise,
+  Zap,
+  Check,
+  X,
+  Loader2,
+  ExternalLink,
+  Shield,
+  TrendingUp,
+  AlertTriangle,
 } from "lucide-react";
-import { fetchResource } from "./api";
+import { fetchResource, generateBriefing, approveAction, getLatestBriefing } from "./api";
 import "./styles.css";
 
 const tabs = [
+  { id: "briefing", label: "Daybreak", icon: Sunrise },
   { id: "clients", label: "Clients", icon: Users },
   { id: "leads", label: "Leads", icon: Megaphone },
   { id: "events", label: "Events", icon: WalletCards },
@@ -215,8 +225,206 @@ function CalendarView({ rows }) {
   );
 }
 
+/* ── Urgency bar color helper ── */
+function urgencyColor(score) {
+  if (score >= 75) return "var(--urgency-high)";
+  if (score >= 45) return "var(--urgency-med)";
+  return "var(--urgency-low)";
+}
+
+/* ── Briefing view (Daybreak) ── */
+function BriefingView() {
+  const [briefing, setBriefing] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [approving, setApproving] = useState({});
+  const [approved, setApproved] = useState({});
+
+  // Try to load the latest briefing on mount
+  useEffect(() => {
+    getLatestBriefing().then((data) => {
+      if (data && data.items) setBriefing(data);
+    });
+  }, []);
+
+  const handleGenerate = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await generateBriefing({ limit: 10 });
+      setBriefing(result);
+      setApproved({});
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApprove = async (index) => {
+    setApproving((prev) => ({ ...prev, [index]: true }));
+    try {
+      await approveAction(index);
+      setApproved((prev) => ({ ...prev, [index]: true }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setApproving((prev) => ({ ...prev, [index]: false }));
+    }
+  };
+
+  return (
+    <div className="briefing-container">
+      {/* Hero banner */}
+      <div className="briefing-hero">
+        <div className="briefing-hero-content">
+          <div className="briefing-hero-icon">
+            <Sunrise size={32} />
+          </div>
+          <div>
+            <h2>Good morning</h2>
+            <p>Your personalised Daybreak briefing — internal CRM signals and external news, ranked by what matters most.</p>
+          </div>
+        </div>
+        <button
+          className="briefing-generate-btn"
+          onClick={handleGenerate}
+          disabled={loading}
+          id="generate-briefing-btn"
+        >
+          {loading ? (
+            <><Loader2 size={18} className="spin" /> Generating...</>
+          ) : (
+            <><Zap size={18} /> Generate Briefing</>
+          )}
+        </button>
+      </div>
+
+      {error && <div className="briefing-error"><AlertTriangle size={16} /> {error}</div>}
+
+      {/* Integration badges */}
+      <div className="briefing-integrations">
+        <span className="integration-chip attio"><Shield size={12} /> Attio</span>
+        <span className="integration-chip tavily"><TrendingUp size={12} /> Tavily</span>
+        <span className="integration-chip gemini"><Zap size={12} /> Gemini</span>
+        <span className="integration-chip n8n">⚡ n8n</span>
+        <span className="integration-chip superlinked disabled">◇ Superlinked</span>
+        <span className="integration-chip slng disabled">🔊 SLNG</span>
+      </div>
+
+      {/* Loading state */}
+      {loading && (
+        <div className="briefing-loading">
+          <div className="briefing-loading-spinner"></div>
+          <p>Scanning Attio pipeline + Tavily news...</p>
+        </div>
+      )}
+
+      {/* No briefing yet */}
+      {!loading && !briefing && (
+        <div className="briefing-empty">
+          <Sunrise size={48} />
+          <h3>No briefing yet</h3>
+          <p>Click "Generate Briefing" to scan your CRM and external news for today's top signals.</p>
+        </div>
+      )}
+
+      {/* Briefing results */}
+      {!loading && briefing && (
+        <div className="briefing-results">
+          <div className="briefing-meta">
+            <span>Generated {formatDateTime(briefing.generated_at)}</span>
+            <span>{briefing.total_signals_gathered} signals scanned</span>
+            <span>{briefing.items.length} items ranked</span>
+            {briefing.n8n_triggered && <StatusBadge tone="blue">n8n triggered</StatusBadge>}
+          </div>
+
+          <div className="briefing-items">
+            {briefing.items.map((item, index) => (
+              <article
+                className={`briefing-card ${approved[index] ? "approved" : ""}`}
+                key={index}
+              >
+                <div className="briefing-card-header">
+                  <div className="briefing-rank">#{item.rank}</div>
+                  <div className="briefing-card-badges">
+                    <StatusBadge tone={item.signal.type === "internal" ? "purple" : "blue"}>
+                      {item.signal.type === "internal" ? "CRM" : "News"}
+                    </StatusBadge>
+                    <StatusBadge tone={item.signal.source === "attio" ? "green" : "yellow"}>
+                      {item.signal.source}
+                    </StatusBadge>
+                  </div>
+                </div>
+
+                <div className="briefing-card-company">{item.signal.company_name}</div>
+                <h3 className="briefing-card-headline">{item.signal.headline}</h3>
+                <p className="briefing-card-detail">{item.signal.detail}</p>
+
+                {item.signal.source_url && (
+                  <a
+                    className="briefing-card-source"
+                    href={item.signal.source_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <ExternalLink size={14} /> Source
+                  </a>
+                )}
+
+                {/* Urgency bar */}
+                <div className="briefing-urgency">
+                  <span className="briefing-urgency-label">Urgency</span>
+                  <div className="briefing-urgency-track">
+                    <div
+                      className="briefing-urgency-fill"
+                      style={{
+                        width: `${item.urgency}%`,
+                        background: urgencyColor(item.urgency),
+                      }}
+                    />
+                  </div>
+                  <span className="briefing-urgency-value">{item.urgency}</span>
+                </div>
+
+                {/* Drafted action */}
+                <div className="briefing-action-box">
+                  <div className="briefing-action-label"><Zap size={14} /> Suggested action</div>
+                  <p>{item.drafted_action}</p>
+                  <div className="briefing-action-reasoning">{item.reasoning}</div>
+                </div>
+
+                {/* Approve / dismiss */}
+                <div className="briefing-card-actions">
+                  {approved[index] ? (
+                    <span className="briefing-approved-label"><Check size={16} /> Approved</span>
+                  ) : (
+                    <>
+                      <button
+                        className="briefing-approve-btn"
+                        onClick={() => handleApprove(index)}
+                        disabled={approving[index]}
+                      >
+                        {approving[index] ? <Loader2 size={14} className="spin" /> : <Check size={14} />}
+                        {approving[index] ? "Saving..." : "Approve & Act"}
+                      </button>
+                      <button className="briefing-dismiss-btn">
+                        <X size={14} /> Dismiss
+                      </button>
+                    </>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function App() {
-  const [activeTab, setActiveTab] = useState("clients");
+  const [activeTab, setActiveTab] = useState("briefing");
   const [data, setData] = useState({});
   const [loading, setLoading] = useState({});
   const [errors, setErrors] = useState({});
@@ -227,6 +435,9 @@ function App() {
   );
 
   useEffect(() => {
+    // Briefing tab has its own data fetching
+    if (activeTab === "briefing") return;
+
     if (data[activeTab] || loading[activeTab]) {
       return;
     }
@@ -249,6 +460,7 @@ function App() {
   const rows = data[activeTab] || [];
 
   const views = {
+    briefing: <BriefingView />,
     clients: <ClientsView rows={rows} />,
     leads: <LeadsView rows={rows} />,
     events: <EventsView rows={rows} />,
@@ -260,8 +472,8 @@ function App() {
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <span>CRM</span>
-          <strong>Workspace</strong>
+          <span>Daybreak</span>
+          <strong>CRM Intelligence</strong>
         </div>
 
         <nav aria-label="CRM sections">
@@ -285,19 +497,27 @@ function App() {
       <section className="content">
         <header className="page-header">
           <div>
-            <p>CRM scaffold</p>
+            <p>{activeTab === "briefing" ? "Morning intelligence" : "CRM scaffold"}</p>
             <h1>{activeConfig.label}</h1>
           </div>
-          <StatusBadge tone="green">Dummy API</StatusBadge>
+          {activeTab === "briefing" ? (
+            <StatusBadge tone="purple">Live</StatusBadge>
+          ) : (
+            <StatusBadge tone="green">Dummy API</StatusBadge>
+          )}
         </header>
 
-        <DataState
-          loading={loading[activeTab]}
-          error={errors[activeTab]}
-          isEmpty={rows.length === 0}
-        >
-          {views[activeTab]}
-        </DataState>
+        {activeTab === "briefing" ? (
+          views.briefing
+        ) : (
+          <DataState
+            loading={loading[activeTab]}
+            error={errors[activeTab]}
+            isEmpty={rows.length === 0}
+          >
+            {views[activeTab]}
+          </DataState>
+        )}
       </section>
     </main>
   );
@@ -308,4 +528,3 @@ createRoot(document.getElementById("root")).render(
     <App />
   </React.StrictMode>
 );
-
