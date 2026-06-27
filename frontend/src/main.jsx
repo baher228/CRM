@@ -4,10 +4,11 @@ import {
   CalendarDays,
   Mail,
   Megaphone,
+  Search,
   Users,
   WalletCards,
 } from "lucide-react";
-import { fetchResource } from "./api";
+import { fetchDiscoveryJob, fetchResource, startDiscoveryJob } from "./api";
 import "./styles.css";
 
 const tabs = [
@@ -16,6 +17,7 @@ const tabs = [
   { id: "events", label: "Events", icon: WalletCards },
   { id: "emails", label: "Emails", icon: Mail },
   { id: "calendar", label: "Calendar", icon: CalendarDays },
+  { id: "discover", label: "Discover", icon: Search },
 ];
 
 const formatCurrency = (value) =>
@@ -39,6 +41,14 @@ const formatDateTime = (value) =>
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+
+const formatDomain = (url) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+};
 
 function StatusBadge({ children, tone = "neutral" }) {
   return <span className={`badge badge-${tone}`}>{children}</span>;
@@ -80,7 +90,7 @@ function TableView({ columns, rows, renderRow }) {
 function ClientsView({ rows }) {
   return (
     <TableView
-      columns={["Name", "Company", "Owner", "Value", "Last contact"]}
+      columns={["Name", "Company", "Website", "Owner", "Value", "Last contact"]}
       rows={rows}
       renderRow={(client) => (
         <tr key={client.id}>
@@ -89,6 +99,11 @@ function ClientsView({ rows }) {
             <span>{client.email}</span>
           </td>
           <td>{client.company}</td>
+          <td>
+            <a className="domain-link" href={client.website} rel="noreferrer" target="_blank">
+              {formatDomain(client.website)}
+            </a>
+          </td>
           <td>{client.owner}</td>
           <td>{formatCurrency(client.value)}</td>
           <td>{formatDate(client.last_contact)}</td>
@@ -108,16 +123,27 @@ function LeadsView({ rows }) {
 
   return (
     <TableView
-      columns={["Lead", "Status", "Source", "Estimated value", "Created"]}
+      columns={["Lead", "Website", "Status", "Confidence", "Source", "Estimated value", "Created"]}
       rows={rows}
       renderRow={(lead) => (
         <tr key={lead.id}>
           <td>
             <strong>{lead.name}</strong>
             <span>{lead.company}</span>
+            <span>{lead.outreach_angle}</span>
+          </td>
+          <td>
+            <a className="domain-link" href={lead.website} rel="noreferrer" target="_blank">
+              {formatDomain(lead.website)}
+            </a>
           </td>
           <td>
             <StatusBadge tone={tones[lead.status]}>{lead.status}</StatusBadge>
+          </td>
+          <td>
+            <StatusBadge tone={lead.confidence_score >= 85 ? "green" : "blue"}>
+              {lead.confidence_score}
+            </StatusBadge>
           </td>
           <td>{lead.source}</td>
           <td>{formatCurrency(lead.estimated_value)}</td>
@@ -215,6 +241,286 @@ function CalendarView({ rows }) {
   );
 }
 
+function DiscoverView({ onLeadsChanged }) {
+  const [niche, setNiche] = useState("");
+  const [region, setRegion] = useState("");
+  const [limit, setLimit] = useState(5);
+  const [dryRun, setDryRun] = useState(true);
+  const [jobId, setJobId] = useState("");
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+
+  const running = Boolean(jobId);
+
+  useEffect(() => {
+    if (!jobId) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function poll() {
+      try {
+        const payload = await fetchDiscoveryJob(jobId);
+        if (cancelled) {
+          return;
+        }
+        setResult(payload);
+        if (payload.state !== "running") {
+          if (payload.state === "completed") {
+            onLeadsChanged();
+          }
+          setJobId("");
+        }
+      } catch (requestError) {
+        if (!cancelled) {
+          setError(requestError.message);
+          setJobId("");
+        }
+      }
+    }
+
+    poll();
+    const timer = window.setInterval(poll, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [jobId]);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+
+    if (!niche.trim() || running) {
+      return;
+    }
+
+    setError("");
+    setResult({
+      state: "running",
+      phase: "queued",
+      message: "Discovery queued",
+      elapsed_seconds: 0,
+      completed: 0,
+      total: Number(limit),
+      dry_run: dryRun,
+      discovered: 0,
+      upserted: 0,
+      failed: 0,
+      results: [],
+    });
+
+    try {
+      const payload = await startDiscoveryJob({
+        niche: niche.trim(),
+        region: region.trim() || null,
+        limit: Number(limit),
+        dry_run: dryRun,
+      });
+      setJobId(payload.job_id);
+    } catch (requestError) {
+      setError(requestError.message);
+      setResult(null);
+    }
+  }
+
+  const rows = result?.results || [];
+  const total = result?.total || result?.discovered || Number(limit);
+  const completed = result?.completed || 0;
+  const progressPercent = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+
+  return (
+    <div className="discover-workflow">
+      <form className="workflow-panel" onSubmit={handleSubmit}>
+        <div className="field-grid">
+          <label>
+            <span>Contract type</span>
+            <input
+              disabled={running}
+              onChange={(event) => setNiche(event.target.value)}
+              placeholder="repairs, refurbishment, M&E"
+              type="text"
+              value={niche}
+            />
+          </label>
+
+          <label>
+            <span>Region</span>
+            <input
+              disabled={running}
+              onChange={(event) => setRegion(event.target.value)}
+              placeholder="Austin, TX"
+              type="text"
+              value={region}
+            />
+          </label>
+
+          <label>
+            <span>Limit</span>
+            <select
+              disabled={running}
+              onChange={(event) => setLimit(event.target.value)}
+              value={limit}
+            >
+              {[3, 5, 10, 20].map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="workflow-actions">
+          <label className="toggle-row">
+            <input
+              checked={!dryRun}
+              disabled={running}
+              onChange={(event) => setDryRun(!event.target.checked)}
+              type="checkbox"
+            />
+            <span>Write companies to Attio</span>
+          </label>
+
+          <button disabled={!niche.trim() || running} type="submit">
+            {running ? "Running..." : dryRun ? "Run dry check" : "Discover and sync"}
+          </button>
+        </div>
+      </form>
+
+      {error ? <div className="state state-error">{error}</div> : null}
+
+      {result ? (
+        <section className="workflow-results">
+          <div className="progress-panel">
+            <div className="progress-topline">
+              <div>
+                <StatusBadge tone={result.state === "failed" ? "red" : "blue"}>
+                  {result.phase}
+                </StatusBadge>
+                <strong>{result.message}</strong>
+              </div>
+              <span>{formatElapsed(result.elapsed_seconds)}</span>
+            </div>
+            <div className="progress-bar" aria-label="Discovery progress">
+              <span style={{ width: `${progressPercent}%` }} />
+            </div>
+            <div className="progress-meta">
+              <span>
+                {completed}/{total} completed
+              </span>
+              <span>{progressPercent}%</span>
+            </div>
+          </div>
+
+          <div className="metric-row">
+            <div>
+              <strong>{result.discovered || result.total || 0}</strong>
+              <span>Discovered</span>
+            </div>
+            <div>
+              <strong>{result.upserted}</strong>
+            <span>{result.dry_run ? "Dry run" : "Upserted"}</span>
+            </div>
+            <div>
+              <strong>{result.failed}</strong>
+              <span>Failed</span>
+            </div>
+          </div>
+
+          <DataState loading={false} error="" isEmpty={rows.length === 0}>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Opportunity</th>
+                    <th>Buyer / Portal</th>
+                    <th>Status</th>
+                    <th>Value / Deadline</th>
+                    <th>Sources</th>
+                    <th>Message</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((company) => (
+                    <tr className={`discovery-row row-${company.status}`} key={company.contract_url || `${company.domain}-${company.company_name}`}>
+                      <td>
+                        <strong>{company.contract_title || company.company_name}</strong>
+                        <span>{company.procurement_stage || "Unknown stage"}</span>
+                      </td>
+                      <td>
+                        <strong>{company.buyer_name || company.company_name}</strong>
+                        <span>{company.portal_name || company.portal_domain || company.domain}</span>
+                      </td>
+                      <td>
+                        <StatusBadge tone={statusTone(company.status)}>
+                          {company.status}
+                        </StatusBadge>
+                      </td>
+                      <td>
+                        <strong>{company.contract_value || "Unknown"}</strong>
+                        <span>{company.deadline || "Unknown deadline"}</span>
+                      </td>
+                      <td>
+                        <div className="source-list">
+                          {(company.contract_url
+                            ? [company.contract_url, ...company.source_urls.filter((url) => url !== company.contract_url)]
+                            : company.source_urls
+                          )
+                            .slice(0, 3)
+                            .map((url) => (
+                              <a href={url} key={url} rel="noreferrer" target="_blank">
+                                Source
+                              </a>
+                            ))}
+                          {company.source_urls.length > 3 ? (
+                            <span>+{company.source_urls.length - 3}</span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td>{company.message}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </DataState>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function formatElapsed(value = 0) {
+  const seconds = Math.max(0, Math.round(value));
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (!minutes) {
+    return `${remainder}s`;
+  }
+  return `${minutes}m ${String(remainder).padStart(2, "0")}s`;
+}
+
+function statusTone(status) {
+  if (status === "failed") {
+    return "red";
+  }
+
+  if (status === "dry_run") {
+    return "blue";
+  }
+
+  if (status === "upserted") {
+    return "green";
+  }
+
+  if (["searching", "extracting", "parsing", "syncing"].includes(status)) {
+    return "blue";
+  }
+
+  return "yellow";
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState("clients");
   const [data, setData] = useState({});
@@ -227,6 +533,10 @@ function App() {
   );
 
   useEffect(() => {
+    if (activeTab === "discover" || activeTab === "leads") {
+      return;
+    }
+
     if (data[activeTab] || loading[activeTab]) {
       return;
     }
@@ -243,10 +553,57 @@ function App() {
       })
       .finally(() => {
         setLoading((current) => ({ ...current, [activeTab]: false }));
-      });
+    });
   }, [activeTab, data, loading]);
 
+  useEffect(() => {
+    if (activeTab !== "leads") {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let hasLoaded = false;
+
+    async function loadLeads() {
+      if (!hasLoaded) {
+        setLoading((current) => ({ ...current, leads: true }));
+      }
+      setErrors((current) => ({ ...current, leads: "" }));
+
+      try {
+        const payload = await fetchResource("leads");
+        if (!cancelled) {
+          setData((current) => ({ ...current, leads: payload }));
+          hasLoaded = true;
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setErrors((current) => ({ ...current, leads: error.message }));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading((current) => ({ ...current, leads: false }));
+        }
+      }
+    }
+
+    loadLeads();
+    const timer = window.setInterval(loadLeads, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeTab]);
+
   const rows = data[activeTab] || [];
+
+  function handleLeadsChanged() {
+    setData((current) => {
+      const next = { ...current };
+      delete next.leads;
+      return next;
+    });
+  }
 
   const views = {
     clients: <ClientsView rows={rows} />,
@@ -254,6 +611,7 @@ function App() {
     events: <EventsView rows={rows} />,
     emails: <EmailsView rows={rows} />,
     calendar: <CalendarView rows={rows} />,
+    discover: <DiscoverView onLeadsChanged={handleLeadsChanged} />,
   };
 
   return (
@@ -288,13 +646,15 @@ function App() {
             <p>CRM scaffold</p>
             <h1>{activeConfig.label}</h1>
           </div>
-          <StatusBadge tone="green">Dummy API</StatusBadge>
+          <StatusBadge tone={activeTab === "discover" ? "blue" : "green"}>
+            {activeTab === "discover" ? "Live workflow" : "Dummy API"}
+          </StatusBadge>
         </header>
 
         <DataState
           loading={loading[activeTab]}
           error={errors[activeTab]}
-          isEmpty={rows.length === 0}
+          isEmpty={activeTab !== "discover" && rows.length === 0}
         >
           {views[activeTab]}
         </DataState>
@@ -308,4 +668,3 @@ createRoot(document.getElementById("root")).render(
     <App />
   </React.StrictMode>
 );
-

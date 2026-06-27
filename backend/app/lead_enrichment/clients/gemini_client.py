@@ -56,15 +56,18 @@ class GeminiClient:
         self.client = genai.Client(api_key=settings.gemini_api_key)
 
     async def classify(self, prompt: str) -> LeadClassification:
+        payload = await self.generate_json(prompt, CLASSIFICATION_SCHEMA)
+        return LeadClassification.model_validate(payload)
+
+    async def generate_json(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
         response = await self.client.aio.models.generate_content(
             model=self.settings.gemini_model,
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
-                response_schema=CLASSIFICATION_SCHEMA,
+                response_schema=schema,
                 temperature=0.2,
             ),
         )
         payload = response.text or "{}"
-        return LeadClassification.model_validate(json.loads(payload))
-
+        return json.loads(payload)

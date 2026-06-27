@@ -27,6 +27,7 @@ class Client(BaseModel):
     name: str
     company: str
     email: EmailStr
+    website: str
     phone: str
     owner: str
     value: int
@@ -38,8 +39,11 @@ class Lead(BaseModel):
     name: str
     company: str
     email: EmailStr
+    website: str
     status: LeadStatus
     source: str
+    confidence_score: int
+    outreach_angle: str
     estimated_value: int
     created_at: date
 
@@ -73,4 +77,3 @@ class CalendarItem(BaseModel):
     end_time: time
     related_to: str
     notes: str
-

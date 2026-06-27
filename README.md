@@ -34,6 +34,7 @@ Backend API:
 - `GET /api/emails`
 - `GET /api/calendar`
 - `POST /api/enrichment/run`
+- `POST /api/discovery/run`
 
 ## Lead enrichment agent
 
@@ -48,7 +49,7 @@ Required environment variables:
 $env:ATTIO_API_TOKEN="..."
 $env:TAVILY_API_KEY="..."
 $env:GEMINI_API_KEY="..."
-$env:GEMINI_MODEL="gemini-2.5-flash"
+$env:GEMINI_MODEL="gemini-3.5-flash"
 $env:ATTIO_LEAD_LIST_ID="..."
 ```
 
@@ -78,6 +79,40 @@ Invoke-RestMethod -Method Post `
   -Uri "http://127.0.0.1:8000/api/enrichment/run" `
   -ContentType "application/json" `
   -Body '{"limit": 3, "dry_run": true}'
+```
+
+## Lead discovery agent
+
+The backend also includes a standalone discovery agent under
+`backend/app/lead_discovery/`. It takes a niche and optional region, discovers
+company websites with Tavily, extracts relevant pages, parses normalized company
+profiles with Gemini, and upserts Companies into Attio by domain.
+
+Discovery-specific optional env vars:
+
+```powershell
+$env:ATTIO_DISCOVERY_SUMMARY_ATTRIBUTE="discovery_summary"
+$env:ATTIO_DISCOVERY_CONFIDENCE_ATTRIBUTE="discovery_confidence_score"
+$env:ATTIO_DISCOVERY_SOURCE_URLS_ATTRIBUTE="discovery_source_urls"
+$env:ATTIO_DISCOVERY_FINGERPRINT_ATTRIBUTE="discovery_fingerprint"
+$env:ATTIO_DISCOVERY_NICHE_ATTRIBUTE="discovery_niche"
+$env:ATTIO_DISCOVERY_REGION_ATTRIBUTE="discovery_region"
+```
+
+Run from `backend/`:
+
+```powershell
+python -m app.lead_discovery.runner --niche landscaping --region "Austin, TX" --limit 10 --dry-run
+python -m app.lead_discovery.runner --niche landscaping --region "Austin, TX" --limit 5 --write
+```
+
+Trigger through FastAPI:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8000/api/discovery/run" `
+  -ContentType "application/json" `
+  -Body '{"niche": "landscaping", "region": "Austin, TX", "limit": 10, "dry_run": true}'
 ```
 
 ## Frontend

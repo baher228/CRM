@@ -25,6 +25,11 @@ select {
   font: inherit;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr);
@@ -203,6 +208,17 @@ td span {
   margin-top: 3px;
 }
 
+.domain-link {
+  color: #0369a1;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.domain-link:hover {
+  text-decoration: underline;
+}
+
 .card-grid {
   display: grid;
   gap: 16px;
@@ -297,6 +313,218 @@ dd {
   display: block;
 }
 
+.discover-workflow {
+  display: grid;
+  gap: 16px;
+}
+
+.workflow-panel {
+  background: #ffffff;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 18px;
+  padding: 18px;
+}
+
+.field-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(180px, 1fr) 120px;
+}
+
+.field-grid label {
+  display: grid;
+  gap: 7px;
+}
+
+.field-grid label span {
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.field-grid input,
+.field-grid select {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #111827;
+  min-height: 42px;
+  padding: 9px 11px;
+  width: 100%;
+}
+
+.field-grid input:disabled,
+.field-grid select:disabled {
+  background: #f8fafc;
+  color: #94a3b8;
+}
+
+.field-grid input:focus,
+.field-grid select:focus {
+  border-color: #0ea5e9;
+  outline: 3px solid #bae6fd;
+}
+
+.workflow-actions {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.workflow-actions button {
+  background: #111827;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  cursor: pointer;
+  font-weight: 700;
+  min-height: 42px;
+  padding: 10px 16px;
+}
+
+.toggle-row {
+  align-items: center;
+  color: #475569;
+  display: flex;
+  gap: 10px;
+  font-weight: 700;
+}
+
+.toggle-row input {
+  height: 18px;
+  width: 18px;
+}
+
+.workflow-results {
+  display: grid;
+  gap: 14px;
+}
+
+.progress-panel {
+  background: #ffffff;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.progress-topline {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.progress-topline div {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
+
+.progress-topline strong {
+  color: #111827;
+  font-size: 0.98rem;
+  overflow-wrap: anywhere;
+}
+
+.progress-topline span {
+  color: #64748b;
+  font-size: 0.84rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.progress-bar {
+  background: #e5e7eb;
+  border-radius: 999px;
+  height: 9px;
+  overflow: hidden;
+}
+
+.progress-bar span {
+  background: #0ea5e9;
+  display: block;
+  height: 100%;
+  transition: width 180ms ease;
+}
+
+.progress-meta {
+  color: #64748b;
+  display: flex;
+  font-size: 0.82rem;
+  font-weight: 700;
+  justify-content: space-between;
+  text-transform: uppercase;
+}
+
+.metric-row {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.metric-row div {
+  background: #ffffff;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.metric-row strong {
+  color: #111827;
+  display: block;
+  font-size: 1.55rem;
+  line-height: 1;
+}
+
+.metric-row span {
+  color: #64748b;
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 700;
+  margin-top: 8px;
+  text-transform: uppercase;
+}
+
+.source-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.source-list a,
+.source-list span {
+  background: #e0f2fe;
+  border-radius: 999px;
+  color: #0369a1;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 4px 8px;
+  text-decoration: none;
+}
+
+.discovery-row td {
+  transition: background 160ms ease;
+}
+
+.row-searching td,
+.row-extracting td,
+.row-parsing td,
+.row-syncing td {
+  background: #f8fafc;
+}
+
+.row-failed td {
+  background: #fff7f7;
+}
+
 @media (max-width: 760px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -338,5 +566,19 @@ dd {
   .agenda-item {
     grid-template-columns: 1fr;
   }
-}
 
+  .field-grid,
+  .metric-row {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .progress-topline {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

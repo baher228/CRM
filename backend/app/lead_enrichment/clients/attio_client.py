@@ -38,6 +38,20 @@ class AttioClient:
             json=payload,
         )
 
+    async def upsert_record(
+        self,
+        object_slug: str,
+        matching_attribute: str,
+        values: dict[str, Any],
+    ) -> dict[str, Any]:
+        payload = {"data": {"values": values}}
+        return await self.http.request(
+            "PUT",
+            f"/v2/objects/{object_slug}/records",
+            params={"matching_attribute": matching_attribute},
+            json=payload,
+        )
+
     async def create_note(
         self,
         object_slug: str,
@@ -79,3 +93,15 @@ def _records_from_response(data: dict[str, Any]) -> list[dict[str, Any]]:
         return records.get("records", []) or records.get("entries", []) or []
     return records if isinstance(records, list) else []
 
+
+def record_id_from_response(data: dict[str, Any]) -> str | None:
+    payload = data.get("data", data)
+    if not isinstance(payload, dict):
+        return None
+    record_id = payload.get("record_id")
+    if record_id:
+        return str(record_id)
+    nested_id = payload.get("id")
+    if isinstance(nested_id, dict) and nested_id.get("record_id"):
+        return str(nested_id["record_id"])
+    return None
