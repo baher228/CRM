@@ -24,6 +24,7 @@ export function CalendarView({ rows, clients, onCalendarItemCreated }) {
     groups[item.date].push(item);
     return groups;
   }, {});
+  const agendaEntries = Object.entries(groupedRows);
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -79,7 +80,7 @@ export function CalendarView({ rows, clients, onCalendarItemCreated }) {
   return (
     <div className="calendar-workspace">
       <div className="view-actions">
-        <span className={error ? "form-message form-error" : "form-message"}>
+        <span aria-live="polite" className={error ? "form-message form-error" : "form-message"}>
           {error || message}
         </span>
         <button className="secondary-action action-with-icon" onClick={() => setShowAddForm((open) => !open)} type="button">
@@ -168,24 +169,33 @@ export function CalendarView({ rows, clients, onCalendarItemCreated }) {
       ) : null}
 
       <div className="agenda">
-        {Object.entries(groupedRows).map(([date, items]) => (
-          <section className="agenda-day" key={date}>
-            <h3>{formatDate(date)}</h3>
-            {items.map((item) => (
-              <article className="agenda-item" key={item.id}>
-                <time>
-                  {item.start_time.slice(0, 5)} - {item.end_time.slice(0, 5)}
-                </time>
-                <div>
-                  <strong>{item.title}</strong>
-                  <span>{item.related_to || "No relation"}</span>
-                  <p>{item.notes}</p>
-                  {item.last_sync_message ? <em>{item.last_sync_message}</em> : null}
-                </div>
-              </article>
-            ))}
-          </section>
-        ))}
+        {agendaEntries.length ? (
+          agendaEntries.map(([date, items]) => (
+            <section className="agenda-day" key={date}>
+              <h3>{formatDate(date)}</h3>
+              {items.map((item) => (
+                <article className="calendar-event" key={item.id}>
+                  <time className="calendar-event-time">
+                    {item.start_time.slice(0, 5)} - {item.end_time.slice(0, 5)}
+                  </time>
+                  <div className="calendar-event-body">
+                    <div className="calendar-event-topline">
+                      <strong>{item.title}</strong>
+                      {item.last_sync_message ? <span>{item.last_sync_message}</span> : null}
+                    </div>
+                    <span className="calendar-event-relation">{item.related_to || "No relation"}</span>
+                    {item.notes ? <p>{item.notes}</p> : null}
+                  </div>
+                </article>
+              ))}
+            </section>
+          ))
+        ) : (
+          <div className="state state-empty" role="status">
+            <strong>No events scheduled</strong>
+            <span>Add an event to start building the agenda.</span>
+          </div>
+        )}
       </div>
     </div>
   );

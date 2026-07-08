@@ -1,26 +1,16 @@
-from pathlib import Path
-
-from app.data import CALENDAR
 from app.lead_enrichment.clients.attio_client import AttioClient
 from app.lead_enrichment.clients.http import ApiClientError
 from app.lead_enrichment.config import EnrichmentSettings
 from app.schemas import CalendarCreateRequest, CalendarItem
 from app.services import clients_service
-from app.services.local_store import load_model_list, save_model_list
-
-
-MANUAL_CALENDAR_PATH = Path(__file__).resolve().parents[2] / "manual_calendar.json"
+from app.services import crm_store
 
 
 def list_calendar_items() -> list[CalendarItem]:
-    return sorted(
-        [*CALENDAR, *_load_manual_calendar_items()],
-        key=lambda item: (item.date, item.start_time, item.title.lower()),
-    )
+    return crm_store.list_calendar_items()
 
 
 async def create_calendar_item(request: CalendarCreateRequest) -> CalendarItem:
-    manual_items = _load_manual_calendar_items()
     sync_message = "Saved locally"
     attio_task_created = False
 
@@ -49,7 +39,7 @@ async def create_calendar_item(request: CalendarCreateRequest) -> CalendarItem:
         sync_message = "Saved locally; select an Attio-synced contact to create an Attio task"
 
     item = CalendarItem(
-        id=_next_calendar_id(manual_items),
+        id=0,
         title=request.title.strip(),
         date=request.date,
         start_time=request.start_time,
@@ -58,11 +48,10 @@ async def create_calendar_item(request: CalendarCreateRequest) -> CalendarItem:
         notes=request.notes.strip(),
         related_client_id=request.related_client_id,
         attio_task_created=attio_task_created,
+        sync_status="Synced" if attio_task_created else "Local",
         last_sync_message=sync_message,
     )
-    manual_items.append(item)
-    _save_manual_calendar_items(manual_items)
-    return item
+    return crm_store.create_calendar_item(item)
 
 
 def _related_to(request: CalendarCreateRequest, related_client) -> str:
@@ -84,15 +73,3 @@ Notes:
 {request.notes or ""}
 """.strip()
 
-
-def _next_calendar_id(manual_items: list[CalendarItem]) -> int:
-    ids = [item.id for item in [*CALENDAR, *manual_items]]
-    return max(ids, default=0) + 1
-
-
-def _load_manual_calendar_items() -> list[CalendarItem]:
-    return load_model_list(MANUAL_CALENDAR_PATH, CalendarItem)
-
-
-def _save_manual_calendar_items(items: list[CalendarItem]) -> None:
-    save_model_list(MANUAL_CALENDAR_PATH, items)

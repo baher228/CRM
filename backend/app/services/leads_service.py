@@ -1,5 +1,4 @@
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from app.data import LEADS
@@ -7,7 +6,8 @@ from app.lead_discovery.models import DiscoveryCompanyResult
 from app.lead_enrichment.clients.attio_client import AttioClient, record_id_from_response
 from app.lead_enrichment.clients.http import ApiClientError
 from app.lead_enrichment.config import EnrichmentSettings
-from app.schemas import Lead, LeadStatus, LeadUpdateRequest
+from app.schemas import Lead, LeadBulkRequest, LeadBulkResponse, LeadCreateRequest, LeadStatus, LeadUpdateRequest
+from app.services import crm_store
 from app.services.attio_formatting import attio_person_name, attio_phone_number
 from app.services.contact_lookup_service import find_contact_for_lead
 from app.services.draft_email_service import draft_email_for_lead
@@ -21,10 +21,6 @@ from app.services.lead_discovery_mapper import (
 )
 from app.services.lead_scoring import lead_sort_key, score_lead, with_availability
 from app.services.lead_sources import canonical_url_key, company_domain, first_known, is_known, utc_now
-from app.services.local_store import load_model_list, save_model_list
-
-
-DISCOVERED_LEADS_PATH = Path(__file__).resolve().parents[2] / "discovered_leads.json"
 
 
 def list_leads() -> list[Lead]:
@@ -91,6 +87,55 @@ def update_lead(lead_id: int, request: LeadUpdateRequest) -> Lead | None:
         _save_discovered_leads(leads)
         return leads[index]
     return None
+
+
+def create_lead(request: LeadCreateRequest) -> Lead:
+    today = utc_now().date()
+    lead = Lead(
+        id=0,
+        name=request.name.strip(),
+        company=request.company.strip() or request.name.strip(),
+        email=request.email,
+        website=request.website.strip(),
+        status=request.status,
+        source=request.source.strip() or "Manual",
+        confidence_score=request.confidence_score,
+        outreach_angle=request.outreach_angle.strip(),
+        estimated_value=request.estimated_value,
+        created_at=today,
+        manual_notes=request.manual_notes.strip(),
+        next_action=request.next_action.strip(),
+        first_seen_at=utc_now(),
+        last_seen_at=utc_now(),
+    )
+    return crm_store.create_lead(score_lead(with_availability(lead)))
+
+
+def delete_lead(lead_id: int) -> bool:
+    return crm_store.delete_lead(lead_id)
+
+
+def bulk_update_leads(request: LeadBulkRequest) -> LeadBulkResponse:
+    updated: list[Lead] = []
+    failed = 0
+    for lead_id in request.lead_ids:
+        lead = get_lead(lead_id)
+        if not lead:
+            failed += 1
+            continue
+        if request.action == "reject":
+            next_lead = reject_lead(lead_id)
+        elif request.action == "status" and request.status:
+            next_lead = update_lead(lead_id, LeadUpdateRequest(status=request.status))
+        elif request.action == "review":
+            next_lead = update_lead(lead_id, LeadUpdateRequest(status=LeadStatus.REVIEWING))
+        else:
+            next_lead = None
+        if next_lead:
+            updated.append(next_lead)
+        else:
+            failed += 1
+    return LeadBulkResponse(updated=len(updated), failed=failed, leads=updated)
 
 
 def reject_lead(lead_id: int) -> Lead | None:
@@ -388,8 +433,8 @@ def _next_lead_id(discovered_leads: list[Lead]) -> int:
 
 
 def _load_discovered_leads() -> list[Lead]:
-    return load_model_list(DISCOVERED_LEADS_PATH, Lead)
+    return crm_store.list_leads()
 
 
 def _save_discovered_leads(leads: list[Lead]) -> None:
-    save_model_list(DISCOVERED_LEADS_PATH, leads)
+    crm_store.replace_leads(leads)

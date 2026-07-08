@@ -1,23 +1,30 @@
 import React, { useState } from "react";
-import { UserPlus } from "lucide-react";
+import { Trash2, UserPlus } from "lucide-react";
 
-import { createClient } from "../api";
-import { TableView } from "../components/common";
+import { createClient, deleteClient } from "../api";
+import { StatusBadge, TableView } from "../components/common";
 import { formatCurrency, formatDate, formatDomain } from "../utils/format";
 
-export function ClientsView({ rows, onClientCreated }) {
+const emptyForm = {
+  name: "",
+  company: "",
+  email: "",
+  phone: "",
+  website: "",
+  owner: "",
+  status: "Active",
+  source: "",
+  value: "",
+  last_contact: "",
+  next_action: "",
+  notes: "",
+};
+
+export function ClientsView({ rows, onClientCreated, onClientDeleted }) {
   const [showAddForm, setShowAddForm] = useState(false);
-  const [form, setForm] = useState({
-    name: "",
-    company: "",
-    email: "",
-    phone: "",
-    website: "",
-    owner: "",
-    value: "",
-    last_contact: "",
-  });
+  const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [busyClientId, setBusyClientId] = useState(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -42,21 +49,16 @@ export function ClientsView({ rows, onClientCreated }) {
         phone: form.phone.trim(),
         website: form.website.trim(),
         owner: form.owner.trim(),
+        status: form.status,
+        source: form.source.trim(),
         value: Number(form.value || 0),
         last_contact: form.last_contact || null,
+        next_action: form.next_action.trim(),
+        notes: form.notes.trim(),
       });
       onClientCreated(created);
       setMessage(created.last_sync_message || "Contact saved");
-      setForm({
-        name: "",
-        company: "",
-        email: "",
-        phone: "",
-        website: "",
-        owner: "",
-        value: "",
-        last_contact: "",
-      });
+      setForm(emptyForm);
       setShowAddForm(false);
     } catch (requestError) {
       setError(requestError.message);
@@ -65,10 +67,29 @@ export function ClientsView({ rows, onClientCreated }) {
     }
   }
 
+  async function removeClient(client) {
+    if (!window.confirm(`Delete ${client.name}? This cannot be undone.`)) {
+      return;
+    }
+
+    setBusyClientId(client.id);
+    setMessage("");
+    setError("");
+    try {
+      await deleteClient(client.id);
+      onClientDeleted(client.id);
+      setMessage("Contact deleted");
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusyClientId(null);
+    }
+  }
+
   return (
     <div className="clients-workspace">
       <div className="view-actions">
-        <span className={error ? "form-message form-error" : "form-message"}>
+        <span aria-live="polite" className={error ? "form-message form-error" : "form-message"}>
           {error || message}
         </span>
         <button className="secondary-action action-with-icon" onClick={() => setShowAddForm((open) => !open)} type="button">
@@ -136,6 +157,25 @@ export function ClientsView({ rows, onClientCreated }) {
               />
             </label>
             <label>
+              <span>Status</span>
+              <select onChange={(event) => updateField("status", event.target.value)} value={form.status}>
+                {["Active", "Prospect", "Customer", "Paused", "Archived"].map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Source</span>
+              <input
+                onChange={(event) => updateField("source", event.target.value)}
+                placeholder="Referral"
+                type="text"
+                value={form.source}
+              />
+            </label>
+            <label>
               <span>Value</span>
               <input
                 min="0"
@@ -153,6 +193,24 @@ export function ClientsView({ rows, onClientCreated }) {
                 value={form.last_contact}
               />
             </label>
+            <label className="wide-field">
+              <span>Next action</span>
+              <input
+                onChange={(event) => updateField("next_action", event.target.value)}
+                placeholder="Send proposal"
+                type="text"
+                value={form.next_action}
+              />
+            </label>
+            <label className="wide-field">
+              <span>Notes</span>
+              <input
+                onChange={(event) => updateField("notes", event.target.value)}
+                placeholder="Relationship notes"
+                type="text"
+                value={form.notes}
+              />
+            </label>
           </div>
           <div className="workflow-actions form-actions">
             <button disabled={!form.name.trim() || saving} type="submit">
@@ -164,7 +222,8 @@ export function ClientsView({ rows, onClientCreated }) {
       ) : null}
 
       <TableView
-        columns={["Name", "Company", "Website", "Owner", "Value", "Last contact", "Sync"]}
+        label="Contacts"
+        columns={["Name", "Company", "Website", "Status", "Owner", "Value", "Next action", "Sync"]}
         rows={rows}
         renderRow={(client) => (
           <tr key={client.id}>
@@ -183,10 +242,25 @@ export function ClientsView({ rows, onClientCreated }) {
                 "-"
               )}
             </td>
+            <td>
+              <StatusBadge tone={client.status === "Archived" ? "yellow" : "green"}>{client.status || "Active"}</StatusBadge>
+              {client.source ? <span>{client.source}</span> : null}
+            </td>
             <td>{client.owner || "-"}</td>
             <td>{formatCurrency(client.value || 0)}</td>
-            <td>{formatDate(client.last_contact)}</td>
-            <td>{client.last_sync_message || "-"}</td>
+            <td>
+              {client.next_action || "-"}
+              <span>Last contact: {formatDate(client.last_contact)}</span>
+            </td>
+            <td>
+              {client.last_sync_message || client.sync_status || "-"}
+              <div className="row-actions">
+                <button className="reject-action" disabled={busyClientId === client.id} onClick={() => removeClient(client)} type="button">
+                  <Trash2 size={14} aria-hidden="true" />
+                  Delete
+                </button>
+              </div>
+            </td>
           </tr>
         )}
       />

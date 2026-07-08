@@ -368,7 +368,7 @@ export function DiscoverView({ onLeadsChanged }) {
         </div>
       </form>
 
-      {error ? <div className="state state-error">{error}</div> : null}
+      {error ? <div className="state state-error" role="alert">{error}</div> : null}
 
       {result ? (
         <section className="workflow-results">
@@ -409,16 +409,16 @@ export function DiscoverView({ onLeadsChanged }) {
           </div>
 
           <DataState loading={false} error="" isEmpty={rows.length === 0}>
-            <div className="table-wrap">
+            <div aria-label="Discovery results" className="table-wrap" role="region" tabIndex="0">
               <table>
                 <thead>
                   <tr>
-                    <th>Opportunity</th>
-                    <th>Buyer / Portal</th>
-                    <th>Status</th>
-                    <th>Value / Deadline</th>
-                    <th>Sources</th>
-                    <th>Message</th>
+                    <th scope="col">Opportunity</th>
+                    <th scope="col">Buyer / Portal</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Value / Deadline</th>
+                    <th scope="col">Sources</th>
+                    <th scope="col">Message</th>
                   </tr>
                 </thead>
                 <tbody>

@@ -1,7 +1,17 @@
-import React, { useState } from "react";
-import { Send } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { ListPlus, Plus, Send, StickyNote, Trash2 } from "lucide-react";
 
-import { confirmLead, rejectLead, updateLead } from "../api";
+import {
+  bulkUpdateLeads,
+  confirmLead,
+  createLead,
+  createNote,
+  createTask,
+  deleteLead,
+  fetchActivity,
+  rejectLead,
+  updateLead,
+} from "../api";
 import { StatusBadge, TableView } from "../components/common";
 import {
   availabilityTone,
@@ -18,13 +28,42 @@ import {
   showValue,
 } from "../utils/format";
 
-export function LeadsView({ rows, onLeadUpdated }) {
+const leadStatuses = ["New", "Reviewing", "Needs Contact", "Contacted", "Qualified", "Proposal", "Confirmed", "Rejected"];
+
+const emptyLeadForm = {
+  name: "",
+  company: "",
+  email: "",
+  website: "",
+  source: "Manual",
+  estimated_value: "",
+  outreach_angle: "",
+  next_action: "",
+};
+
+const emptyFollowUpForm = {
+  title: "",
+  due_date: "",
+  priority: "Medium",
+  notes: "",
+};
+
+export function LeadsView({ rows, onLeadCreated, onLeadDeleted, onLeadUpdated, onLeadsBulkUpdated }) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [portalFilter, setPortalFilter] = useState("All");
   const [availabilityFilter, setAvailabilityFilter] = useState("Open/Unverified");
   const [sortMode, setSortMode] = useState("priority");
   const [selectedLead, setSelectedLead] = useState(null);
+  const [selectedLeadIds, setSelectedLeadIds] = useState(new Set());
+  const [bulkStatus, setBulkStatus] = useState("Reviewing");
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [leadForm, setLeadForm] = useState(emptyLeadForm);
+  const [savingLead, setSavingLead] = useState(false);
+  const [activity, setActivity] = useState([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [followUpForm, setFollowUpForm] = useState(emptyFollowUpForm);
   const [busyLeadId, setBusyLeadId] = useState(null);
   const [actionError, setActionError] = useState("");
   const tones = {
@@ -39,7 +78,7 @@ export function LeadsView({ rows, onLeadUpdated }) {
   };
 
   const portals = ["All", ...Array.from(new Set(rows.map((lead) => firstKnown(lead.portal_name, lead.source)).filter(Boolean)))];
-  const statuses = ["All", ...Array.from(new Set(rows.map((lead) => lead.status).filter(Boolean)))];
+  const statuses = ["All", ...Array.from(new Set([...leadStatuses, ...rows.map((lead) => lead.status).filter(Boolean)]))];
   const filteredRows = rows
     .filter((lead) => statusFilter === "All" || lead.status === statusFilter)
     .filter((lead) => portalFilter === "All" || firstKnown(lead.portal_name, lead.source) === portalFilter)
@@ -97,6 +136,98 @@ export function LeadsView({ rows, onLeadUpdated }) {
     lead.status === "Confirmed" || lead.status === "Rejected" || Boolean(lead.confirmed_at) || Boolean(lead.rejected_at);
   const canMarkReviewing = (lead) => !hasDecision(lead) && lead.status !== "Reviewing";
 
+  useEffect(() => {
+    if (!selectedLead) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function loadActivity() {
+      setActivityLoading(true);
+      try {
+        const payload = await fetchActivity("lead", selectedLead.id);
+        if (!cancelled) {
+          setActivity(payload);
+        }
+      } catch {
+        if (!cancelled) {
+          setActivity([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setActivityLoading(false);
+        }
+      }
+    }
+
+    loadActivity();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedLead]);
+
+  async function reloadActivity(lead = selectedLead) {
+    if (!lead) {
+      return;
+    }
+    setActivityLoading(true);
+    try {
+      setActivity(await fetchActivity("lead", lead.id));
+    } finally {
+      setActivityLoading(false);
+    }
+  }
+
+  function updateLeadForm(field, value) {
+    setLeadForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateFollowUpField(field, value) {
+    setFollowUpForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function toggleLeadSelection(leadId) {
+    setSelectedLeadIds((current) => {
+      const next = new Set(current);
+      if (next.has(leadId)) {
+        next.delete(leadId);
+      } else {
+        next.add(leadId);
+      }
+      return next;
+    });
+  }
+
+  async function handleCreateLead(event) {
+    event.preventDefault();
+    if (!leadForm.name.trim() || savingLead) {
+      return;
+    }
+
+    setSavingLead(true);
+    setActionError("");
+    try {
+      const created = await createLead({
+        name: leadForm.name.trim(),
+        company: leadForm.company.trim(),
+        email: leadForm.email.trim() || null,
+        website: leadForm.website.trim(),
+        source: leadForm.source.trim() || "Manual",
+        estimated_value: Number(leadForm.estimated_value || 0),
+        outreach_angle: leadForm.outreach_angle.trim(),
+        next_action: leadForm.next_action.trim(),
+      });
+      onLeadCreated(created);
+      setLeadForm(emptyLeadForm);
+      setShowAddForm(false);
+    } catch (error) {
+      setActionError(error.message);
+    } finally {
+      setSavingLead(false);
+    }
+  }
+
   async function runAction(lead, action) {
     setBusyLeadId(lead.id);
     setActionError("");
@@ -122,6 +253,97 @@ export function LeadsView({ rows, onLeadUpdated }) {
       setActionError(error.message);
     } finally {
       setBusyLeadId(null);
+    }
+  }
+
+  async function removeLead(lead) {
+    if (!window.confirm(`Delete ${leadTitle(lead)}? This cannot be undone.`)) {
+      return;
+    }
+
+    setBusyLeadId(lead.id);
+    setActionError("");
+    try {
+      await deleteLead(lead.id);
+      onLeadDeleted(lead.id);
+      setSelectedLeadIds((current) => {
+        const next = new Set(current);
+        next.delete(lead.id);
+        return next;
+      });
+      if (selectedLead?.id === lead.id) {
+        setSelectedLead(null);
+      }
+    } catch (error) {
+      setActionError(error.message);
+    } finally {
+      setBusyLeadId(null);
+    }
+  }
+
+  async function handleBulkStatus() {
+    if (!selectedLeadIds.size) {
+      return;
+    }
+
+    setActionError("");
+    setBusyLeadId(-1);
+    try {
+      const payload = await bulkUpdateLeads({
+        lead_ids: Array.from(selectedLeadIds),
+        action: "status",
+        status: bulkStatus,
+      });
+      onLeadsBulkUpdated(payload.leads);
+      setSelectedLeadIds(new Set());
+    } catch (error) {
+      setActionError(error.message);
+    } finally {
+      setBusyLeadId(null);
+    }
+  }
+
+  async function handleAddNote(event) {
+    event.preventDefault();
+    if (!selectedLead || !noteDraft.trim()) {
+      return;
+    }
+
+    setActionError("");
+    try {
+      await createNote({
+        related_type: "lead",
+        related_id: selectedLead.id,
+        body: noteDraft.trim(),
+      });
+      setNoteDraft("");
+      await reloadActivity(selectedLead);
+    } catch (error) {
+      setActionError(error.message);
+    }
+  }
+
+  async function handleCreateFollowUp(event) {
+    event.preventDefault();
+    if (!selectedLead || !followUpForm.title.trim()) {
+      return;
+    }
+
+    setActionError("");
+    try {
+      await createTask({
+        title: followUpForm.title.trim(),
+        due_date: followUpForm.due_date || null,
+        related_type: "lead",
+        related_id: selectedLead.id,
+        related_to: buyerName(selectedLead),
+        priority: followUpForm.priority,
+        notes: followUpForm.notes.trim(),
+      });
+      setFollowUpForm(emptyFollowUpForm);
+      await reloadActivity(selectedLead);
+    } catch (error) {
+      setActionError(error.message);
     }
   }
 
@@ -161,7 +383,7 @@ export function LeadsView({ rows, onLeadUpdated }) {
           ) : null}
         </div>
 
-        {actionError ? <div className="state state-error compact-state">{actionError}</div> : null}
+        {actionError ? <div className="state state-error compact-state" role="alert">{actionError}</div> : null}
 
         <section className="tender-hero">
           <div>
@@ -211,6 +433,71 @@ export function LeadsView({ rows, onLeadUpdated }) {
           <section>
             <h3>Tender notes</h3>
             <p>{showValue(selectedLead.outreach_angle, "No notes parsed yet.")}</p>
+          </section>
+          <section>
+            <h3>Activity</h3>
+            {activityLoading ? (
+              <p>Loading activity...</p>
+            ) : activity.length ? (
+              <div className="activity-list compact-activity-list">
+                {activity.map((item) => (
+                  <article className="activity-item" key={item.id}>
+                    <StickyNote size={15} aria-hidden="true" />
+                    <div>
+                      <strong>{item.title}</strong>
+                      <p>{item.detail}</p>
+                      <span>{formatDate(item.occurred_at)}</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p>No activity yet.</p>
+            )}
+          </section>
+          <section>
+            <h3>Add note</h3>
+            <form className="mini-form" onSubmit={handleAddNote}>
+              <textarea
+                onChange={(event) => setNoteDraft(event.target.value)}
+                placeholder="Capture context, call notes, or qualification detail"
+                rows="4"
+                value={noteDraft}
+              />
+              <button className="secondary-action action-with-icon" disabled={!noteDraft.trim()} type="submit">
+                <StickyNote size={15} aria-hidden="true" />
+                Save note
+              </button>
+            </form>
+          </section>
+          <section>
+            <h3>Create follow-up</h3>
+            <form className="mini-form" onSubmit={handleCreateFollowUp}>
+              <input
+                onChange={(event) => updateFollowUpField("title", event.target.value)}
+                placeholder="Follow up with buyer"
+                type="text"
+                value={followUpForm.title}
+              />
+              <input onChange={(event) => updateFollowUpField("due_date", event.target.value)} type="date" value={followUpForm.due_date} />
+              <select onChange={(event) => updateFollowUpField("priority", event.target.value)} value={followUpForm.priority}>
+                {["Low", "Medium", "High"].map((priority) => (
+                  <option key={priority} value={priority}>
+                    {priority}
+                  </option>
+                ))}
+              </select>
+              <input
+                onChange={(event) => updateFollowUpField("notes", event.target.value)}
+                placeholder="Task notes"
+                type="text"
+                value={followUpForm.notes}
+              />
+              <button className="secondary-action action-with-icon" disabled={!followUpForm.title.trim()} type="submit">
+                <ListPlus size={15} aria-hidden="true" />
+                Save follow-up
+              </button>
+            </form>
           </section>
           <section>
             <h3>Availability</h3>
@@ -307,7 +594,7 @@ export function LeadsView({ rows, onLeadUpdated }) {
             <h3>Seen</h3>
             <p>
               Seen {selectedLead.seen_count || 1} time{(selectedLead.seen_count || 1) === 1 ? "" : "s"}
-              {selectedLead.last_seen_at ? ` · Last seen ${formatDate(selectedLead.last_seen_at)}` : ""}
+              {selectedLead.last_seen_at ? ` - Last seen ${formatDate(selectedLead.last_seen_at)}` : ""}
             </p>
           </section>
         </div>
@@ -317,6 +604,112 @@ export function LeadsView({ rows, onLeadUpdated }) {
 
   return (
     <div className="leads-workspace">
+      <div className="view-actions">
+        <div className="lead-bulk-actions">
+          <select onChange={(event) => setBulkStatus(event.target.value)} value={bulkStatus}>
+            {leadStatuses.filter((status) => !["Confirmed", "Rejected"].includes(status)).map((status) => (
+              <option key={status} value={status}>
+                {status}
+              </option>
+            ))}
+          </select>
+          <button className="secondary-action action-with-icon" disabled={!selectedLeadIds.size || busyLeadId === -1} onClick={handleBulkStatus} type="button">
+            Update {selectedLeadIds.size || 0}
+          </button>
+        </div>
+        <button className="secondary-action action-with-icon" onClick={() => setShowAddForm((open) => !open)} type="button">
+          <Plus size={17} aria-hidden="true" />
+          {showAddForm ? "Close" : "Add lead"}
+        </button>
+      </div>
+
+      {showAddForm ? (
+        <form className="workflow-panel compact-form" onSubmit={handleCreateLead}>
+          <div className="field-grid client-field-grid">
+            <label>
+              <span>Name</span>
+              <input
+                onChange={(event) => updateLeadForm("name", event.target.value)}
+                placeholder="New opportunity"
+                required
+                type="text"
+                value={leadForm.name}
+              />
+            </label>
+            <label>
+              <span>Company</span>
+              <input
+                onChange={(event) => updateLeadForm("company", event.target.value)}
+                placeholder="Acme Ltd"
+                type="text"
+                value={leadForm.company}
+              />
+            </label>
+            <label>
+              <span>Email</span>
+              <input
+                onChange={(event) => updateLeadForm("email", event.target.value)}
+                placeholder="buyer@example.com"
+                type="email"
+                value={leadForm.email}
+              />
+            </label>
+            <label>
+              <span>Website</span>
+              <input
+                onChange={(event) => updateLeadForm("website", event.target.value)}
+                placeholder="https://example.com"
+                type="url"
+                value={leadForm.website}
+              />
+            </label>
+            <label>
+              <span>Source</span>
+              <input
+                onChange={(event) => updateLeadForm("source", event.target.value)}
+                placeholder="Manual"
+                type="text"
+                value={leadForm.source}
+              />
+            </label>
+            <label>
+              <span>Value</span>
+              <input
+                min="0"
+                onChange={(event) => updateLeadForm("estimated_value", event.target.value)}
+                placeholder="0"
+                type="number"
+                value={leadForm.estimated_value}
+              />
+            </label>
+            <label className="wide-field">
+              <span>Next action</span>
+              <input
+                onChange={(event) => updateLeadForm("next_action", event.target.value)}
+                placeholder="Qualify fit"
+                type="text"
+                value={leadForm.next_action}
+              />
+            </label>
+            <label className="wide-field">
+              <span>Notes</span>
+              <input
+                onChange={(event) => updateLeadForm("outreach_angle", event.target.value)}
+                placeholder="Why this is worth pursuing"
+                type="text"
+                value={leadForm.outreach_angle}
+              />
+            </label>
+          </div>
+          <div className="workflow-actions form-actions">
+            <button disabled={!leadForm.name.trim() || savingLead} type="submit">
+              <Plus size={17} aria-hidden="true" />
+              {savingLead ? "Saving..." : "Save lead"}
+            </button>
+          </div>
+        </form>
+      ) : null}
+
       <div className="leads-toolbar">
         <input
           onChange={(event) => setQuery(event.target.value)}
@@ -353,10 +746,11 @@ export function LeadsView({ rows, onLeadUpdated }) {
         </select>
       </div>
 
-      {actionError ? <div className="state state-error compact-state">{actionError}</div> : null}
+      {actionError ? <div className="state state-error compact-state" role="alert">{actionError}</div> : null}
 
       <div className="leads-layout">
         <TableView
+          label="Leads"
           columns={["Lead", "Priority", "Status", "Fit", "Portal", "Details"]}
           rows={filteredRows}
           renderRow={(lead) => (
@@ -367,6 +761,14 @@ export function LeadsView({ rows, onLeadUpdated }) {
                 {isKnown(lead.procurement_stage) ? <span>Stage: {lead.procurement_stage}</span> : null}
                 {isKnown(lead.outreach_angle) ? <span className="lead-note">{lead.outreach_angle}</span> : null}
                 <div className="row-actions">
+                  <label className="checkbox-action">
+                    <input
+                      checked={selectedLeadIds.has(lead.id)}
+                      onChange={() => toggleLeadSelection(lead.id)}
+                      type="checkbox"
+                    />
+                    Select
+                  </label>
                   <button className="secondary-action" onClick={() => setSelectedLead(lead)} type="button">
                     Review
                   </button>
@@ -385,6 +787,10 @@ export function LeadsView({ rows, onLeadUpdated }) {
                       Source
                     </a>
                   ) : null}
+                  <button className="reject-action" disabled={busyLeadId === lead.id} onClick={() => removeLead(lead)} type="button">
+                    <Trash2 size={14} aria-hidden="true" />
+                    Delete
+                  </button>
                 </div>
               </td>
               <td>

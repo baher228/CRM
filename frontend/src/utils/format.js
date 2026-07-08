@@ -5,20 +5,36 @@ export const formatCurrency = (value) =>
     maximumFractionDigits: 0,
   }).format(value);
 
-export const formatDate = (value) =>
-  new Intl.DateTimeFormat("en-GB", {
+export const formatDate = (value, fallback = "-") => {
+  if (!value) {
+    return fallback;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return fallback;
+  }
+  return new Intl.DateTimeFormat("en-GB", {
     month: "short",
     day: "numeric",
     year: "numeric",
-  }).format(new Date(value));
+  }).format(date);
+};
 
-export const formatDateTime = (value) =>
-  new Intl.DateTimeFormat("en-GB", {
+export const formatDateTime = (value, fallback = "-") => {
+  if (!value) {
+    return fallback;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return fallback;
+  }
+  return new Intl.DateTimeFormat("en-GB", {
     month: "short",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  }).format(date);
+};
 
 export const formatDomain = (url) => {
   try {

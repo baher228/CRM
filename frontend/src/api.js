@@ -26,6 +26,34 @@ export async function postResource(resource, payload) {
   return response.json();
 }
 
+export async function patchResource(resource, payload) {
+  const response = await fetch(`${API_BASE_URL}/${resource}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response, `Could not update ${resource}`));
+  }
+
+  return response.json();
+}
+
+export async function deleteResource(resource) {
+  const response = await fetch(`${API_BASE_URL}/${resource}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response, `Could not delete ${resource}`));
+  }
+
+  return response.json();
+}
+
 export async function startDiscoveryJob(payload) {
   return postResource("discovery/jobs", payload);
 }
@@ -34,8 +62,36 @@ export async function createClient(payload) {
   return postResource("clients", payload);
 }
 
+export async function updateClient(clientId, payload) {
+  return patchResource(`clients/${clientId}`, payload);
+}
+
+export async function deleteClient(clientId) {
+  return deleteResource(`clients/${clientId}`);
+}
+
 export async function createCalendarItem(payload) {
   return postResource("calendar", payload);
+}
+
+export async function createTask(payload) {
+  return postResource("tasks", payload);
+}
+
+export async function updateTask(taskId, payload) {
+  return patchResource(`tasks/${taskId}`, payload);
+}
+
+export async function deleteTask(taskId) {
+  return deleteResource(`tasks/${taskId}`);
+}
+
+export async function createNote(payload) {
+  return postResource("notes", payload);
+}
+
+export async function fetchActivity(relatedType, relatedId) {
+  return fetchResource(`activity/${relatedType}/${relatedId}`);
 }
 
 export async function fetchDiscoveryJob(jobId) {
@@ -55,19 +111,19 @@ export async function fetchDiscoveryPortals(niche = "", region = "") {
 }
 
 export async function updateLead(leadId, payload) {
-  const response = await fetch(`${API_BASE_URL}/leads/${leadId}`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+  return patchResource(`leads/${leadId}`, payload);
+}
 
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response, "Could not update lead"));
-  }
+export async function createLead(payload) {
+  return postResource("leads", payload);
+}
 
-  return response.json();
+export async function deleteLead(leadId) {
+  return deleteResource(`leads/${leadId}`);
+}
+
+export async function bulkUpdateLeads(payload) {
+  return postResource("leads/bulk", payload);
 }
 
 export async function confirmLead(leadId) {
@@ -97,6 +153,27 @@ export async function getLatestBriefing() {
   const response = await fetch(`${API_BASE_URL}/briefing/latest`);
   if (!response.ok) return null;
   return response.json();
+}
+
+export async function fetchDashboard() {
+  return fetchResource("dashboard");
+}
+
+export async function fetchSearch(query) {
+  const search = new URLSearchParams({ q: query.trim() });
+  return fetchResource(`search?${search}`);
+}
+
+export async function fetchSettingsHealth() {
+  return fetchResource("settings/health");
+}
+
+export async function fetchMailSettings() {
+  return fetchResource("settings/mail");
+}
+
+export async function saveMailSettings(payload) {
+  return postResource("settings/mail", payload);
 }
 
 export async function approveAction(itemIndex, actionText = null) {
