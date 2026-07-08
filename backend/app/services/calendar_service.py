@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from app.data import CALENDAR
@@ -7,6 +6,7 @@ from app.lead_enrichment.clients.http import ApiClientError
 from app.lead_enrichment.config import EnrichmentSettings
 from app.schemas import CalendarCreateRequest, CalendarItem
 from app.services import clients_service
+from app.services.local_store import load_model_list, save_model_list
 
 
 MANUAL_CALENDAR_PATH = Path(__file__).resolve().parents[2] / "manual_calendar.json"
@@ -91,23 +91,8 @@ def _next_calendar_id(manual_items: list[CalendarItem]) -> int:
 
 
 def _load_manual_calendar_items() -> list[CalendarItem]:
-    if not MANUAL_CALENDAR_PATH.exists():
-        return []
-    try:
-        payload = json.loads(MANUAL_CALENDAR_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(payload, list):
-        return []
-    items = []
-    for item in payload:
-        try:
-            items.append(CalendarItem.model_validate(item))
-        except ValueError:
-            continue
-    return items
+    return load_model_list(MANUAL_CALENDAR_PATH, CalendarItem)
 
 
 def _save_manual_calendar_items(items: list[CalendarItem]) -> None:
-    payload = [item.model_dump(mode="json") for item in items]
-    MANUAL_CALENDAR_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    save_model_list(MANUAL_CALENDAR_PATH, items)

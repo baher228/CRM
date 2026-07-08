@@ -8,10 +8,16 @@ from app.lead_discovery.models import (
     DiscoveryRunResponse,
 )
 from app.lead_discovery.runner import run_discovery
+from app.lead_discovery.search_companies_with_tavily import portal_metadata
 from app.services.leads_service import add_discovered_leads
 
 
 router = APIRouter()
+
+
+@router.get("/discovery/portals")
+def get_discovery_portals(niche: str = "", region: str | None = None) -> list[dict[str, object]]:
+    return portal_metadata(niche=niche, region=region)
 
 
 @router.post("/discovery/jobs", response_model=DiscoveryJobStartResponse)

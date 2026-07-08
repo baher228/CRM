@@ -1,4 +1,11 @@
 :root {
+  --surface-1: #ffffff;
+  --surface-2: #f8fafc;
+  --border: #dde3ea;
+  --text-1: #111827;
+  --text-2: #64748b;
+  --red: #b91c1c;
+  --blue: #0369a1;
   color: #1f2933;
   background: #eef2f5;
   font-family:

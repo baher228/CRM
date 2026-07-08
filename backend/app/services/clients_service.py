@@ -1,7 +1,5 @@
 from datetime import date
-import json
 from pathlib import Path
-import re
 from typing import Any
 
 from app.data import CLIENTS
@@ -9,6 +7,8 @@ from app.lead_enrichment.clients.attio_client import AttioClient, record_id_from
 from app.lead_enrichment.clients.http import ApiClientError
 from app.lead_enrichment.config import EnrichmentSettings
 from app.schemas import Client, ClientCreateRequest
+from app.services.attio_formatting import attio_person_name, attio_phone_number
+from app.services.local_store import load_model_list, save_model_list
 
 
 MANUAL_CLIENTS_PATH = Path(__file__).resolve().parents[2] / "manual_clients.json"
@@ -68,31 +68,10 @@ async def create_client(request: ClientCreateRequest) -> Client:
 def _person_values(request: ClientCreateRequest, settings: EnrichmentSettings) -> dict[str, Any]:
     values: dict[str, Any] = {settings.attio_person_email_attribute: [str(request.email)]}
     if request.name.strip():
-        values[settings.attio_person_name_attribute] = [_attio_person_name(request.name)]
+        values[settings.attio_person_name_attribute] = [attio_person_name(request.name)]
     if request.phone.strip():
-        values[settings.attio_person_phone_attribute] = [_attio_phone_number(request.phone, settings)]
+        values[settings.attio_person_phone_attribute] = [attio_phone_number(request.phone, settings)]
     return values
-
-
-def _attio_person_name(name: str) -> dict[str, str]:
-    parts = [part for part in re.split(r"\s+", name.strip()) if part]
-    if not parts:
-        return {"first_name": "", "last_name": "", "full_name": ""}
-    if len(parts) == 1:
-        return {"first_name": parts[0], "last_name": "", "full_name": parts[0]}
-    return {
-        "first_name": " ".join(parts[:-1]),
-        "last_name": parts[-1],
-        "full_name": " ".join(parts),
-    }
-
-
-def _attio_phone_number(phone: str, settings: EnrichmentSettings) -> dict[str, str]:
-    cleaned = re.sub(r"\s+", " ", phone.strip())
-    value = {"original_phone_number": cleaned}
-    if not cleaned.startswith("+"):
-        value["country_code"] = settings.attio_default_phone_country_code
-    return value
 
 
 def _next_client_id(manual_clients: list[Client]) -> int:
@@ -101,23 +80,8 @@ def _next_client_id(manual_clients: list[Client]) -> int:
 
 
 def _load_manual_clients() -> list[Client]:
-    if not MANUAL_CLIENTS_PATH.exists():
-        return []
-    try:
-        payload = json.loads(MANUAL_CLIENTS_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(payload, list):
-        return []
-    clients = []
-    for item in payload:
-        try:
-            clients.append(Client.model_validate(item))
-        except ValueError:
-            continue
-    return clients
+    return load_model_list(MANUAL_CLIENTS_PATH, Client)
 
 
 def _save_manual_clients(clients: list[Client]) -> None:
-    payload = [client.model_dump(mode="json") for client in clients]
-    MANUAL_CLIENTS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    save_model_list(MANUAL_CLIENTS_PATH, clients)

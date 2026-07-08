@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routes import briefing, calendar, clients, discovery, emails, enrichment, events, health, leads
 
 
-app = FastAPI(title="CRM Scaffold API", version="0.1.0")
+app = FastAPI(title="CRM Workspace API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,

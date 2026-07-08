@@ -42,6 +42,18 @@ export async function fetchDiscoveryJob(jobId) {
   return fetchResource(`discovery/jobs/${jobId}`);
 }
 
+export async function fetchDiscoveryPortals(niche = "", region = "") {
+  const search = new URLSearchParams();
+  if (niche.trim()) {
+    search.set("niche", niche.trim());
+  }
+  if (region.trim()) {
+    search.set("region", region.trim());
+  }
+  const suffix = search.toString() ? `?${search}` : "";
+  return fetchResource(`discovery/portals${suffix}`);
+}
+
 export async function updateLead(leadId, payload) {
   const response = await fetch(`${API_BASE_URL}/leads/${leadId}`, {
     method: "PATCH",

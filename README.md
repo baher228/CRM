@@ -1,19 +1,22 @@
-# CRM Scaffold
+# CRM Workspace
 
-A lightweight CRM каркас with a FastAPI backend and React Vite frontend.
+A lightweight CRM workspace with a FastAPI backend and React/Vite frontend. It combines local CRM records with Attio sync, Tavily research, Gemini drafting, tender discovery, and the Daybreak briefing workflow.
 
 ## Structure
 
-- `backend/` - FastAPI app with dummy in-memory API data.
-- `frontend/` - React Vite app with CRM tabs.
+- `backend/` - FastAPI API, local JSON persistence, Attio/Tavily/Gemini workflows.
+- `frontend/` - React/Vite CRM interface.
+- `daybreak_n8n_workflow.json` - starter n8n workflow for Daybreak scheduling.
 
 Backend modules:
 
-- `backend/app/main.py` - app setup, CORS, and router registration.
-- `backend/app/schemas.py` - Pydantic models and enums.
-- `backend/app/data.py` - dummy in-memory records.
+- `backend/app/main.py` - app setup, CORS, and route registration.
+- `backend/app/schemas.py` - shared Pydantic API models.
+- `backend/app/data.py` - optional seed records for local demos.
 - `backend/app/routes/` - thin FastAPI route modules.
-- `backend/app/services/` - simple service functions for each CRM area.
+- `backend/app/services/` - CRM orchestration and reusable helpers.
+- `backend/app/lead_enrichment/` - Attio lead enrichment workflow.
+- `backend/app/lead_discovery/` - public contract discovery workflow.
 
 ## Backend
 
@@ -25,88 +28,49 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Backend API:
+Copy `backend/.env.example` to `backend/.env` and fill in real API keys for Attio, Tavily, and Gemini.
+
+Core API:
 
 - `GET /api/health`
 - `GET /api/clients`
+- `POST /api/clients`
 - `GET /api/leads`
+- `PATCH /api/leads/{lead_id}`
+- `POST /api/leads/{lead_id}/confirm`
+- `POST /api/leads/{lead_id}/reject`
 - `GET /api/events`
 - `GET /api/emails`
 - `GET /api/calendar`
+- `POST /api/calendar`
 - `POST /api/enrichment/run`
+- `GET /api/discovery/portals`
+- `POST /api/discovery/jobs`
+- `GET /api/discovery/jobs/{job_id}`
 - `POST /api/discovery/run`
+- `POST /api/briefing/generate`
+- `GET /api/briefing/latest`
+- `POST /api/briefing/approve`
 
-## Lead enrichment agent
+Seed data is kept as a local fallback. Set `CRM_INCLUDE_DEMO_LEADS=true` to include demo leads alongside discovered leads; manually added clients, calendar items, and discovered leads are stored in ignored JSON files under `backend/`.
 
-The backend includes a standalone lead enrichment agent under
-`backend/app/lead_enrichment/`. It reads leads from Attio, researches company
-pages with Tavily, classifies signals with Gemini, and can write summaries,
-scores, notes, and follow-up tasks back to Attio.
+## Workflows
 
-Required environment variables:
-
-```powershell
-$env:ATTIO_API_TOKEN="..."
-$env:TAVILY_API_KEY="..."
-$env:GEMINI_API_KEY="..."
-$env:GEMINI_MODEL="gemini-3.5-flash"
-$env:ATTIO_LEAD_LIST_ID="..."
-```
-
-Optional Attio attribute slug overrides:
-
-```powershell
-$env:ATTIO_ENRICHMENT_SUMMARY_ATTRIBUTE="lead_enrichment_summary"
-$env:ATTIO_FIT_SCORE_ATTRIBUTE="lead_fit_score"
-$env:ATTIO_URGENCY_SCORE_ATTRIBUTE="lead_urgency_score"
-$env:ATTIO_CONFIDENCE_SCORE_ATTRIBUTE="lead_enrichment_confidence"
-$env:ATTIO_FINGERPRINT_ATTRIBUTE="lead_enrichment_fingerprint"
-$env:ATTIO_SOURCE_URLS_ATTRIBUTE="lead_enrichment_source_urls"
-$env:ATTIO_ENRICHED_AT_ATTRIBUTE="lead_enriched_at"
-```
-
-Run from `backend/`:
+Run lead enrichment from `backend/`:
 
 ```powershell
 python -m app.lead_enrichment.runner --limit 3 --dry-run
 python -m app.lead_enrichment.runner --limit 1 --write
 ```
 
-Trigger through FastAPI:
-
-```powershell
-Invoke-RestMethod -Method Post `
-  -Uri "http://127.0.0.1:8000/api/enrichment/run" `
-  -ContentType "application/json" `
-  -Body '{"limit": 3, "dry_run": true}'
-```
-
-## Lead discovery agent
-
-The backend also includes a standalone discovery agent under
-`backend/app/lead_discovery/`. It takes a niche and optional region, discovers
-company websites with Tavily, extracts relevant pages, parses normalized company
-profiles with Gemini, and upserts Companies into Attio by domain.
-
-Discovery-specific optional env vars:
-
-```powershell
-$env:ATTIO_DISCOVERY_SUMMARY_ATTRIBUTE="discovery_summary"
-$env:ATTIO_DISCOVERY_CONFIDENCE_ATTRIBUTE="discovery_confidence_score"
-$env:ATTIO_DISCOVERY_SOURCE_URLS_ATTRIBUTE="discovery_source_urls"
-$env:ATTIO_DISCOVERY_FINGERPRINT_ATTRIBUTE="discovery_fingerprint"
-$env:ATTIO_DISCOVERY_NICHE_ATTRIBUTE="discovery_niche"
-$env:ATTIO_DISCOVERY_REGION_ATTRIBUTE="discovery_region"
-```
-
-Run from `backend/`:
+Run public contract discovery from `backend/`:
 
 ```powershell
 python -m app.lead_discovery.runner --niche landscaping --region "Austin, TX" --limit 10 --dry-run
 python -m app.lead_discovery.runner --niche landscaping --region "Austin, TX" --limit 5 --write
 ```
 
-Trigger through FastAPI:
+Trigger discovery through FastAPI:
 
 ```powershell
 Invoke-RestMethod -Method Post `
@@ -123,7 +87,15 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open `http://localhost:5173`. If the backend is not on `http://localhost:8000/api`, copy `frontend/.env.example` to `frontend/.env` and set `VITE_API_BASE_URL`.
 
-If port `5173` is already busy, Vite will print the fallback URL, for example
-`http://127.0.0.1:5174`. The backend allows local Vite ports `5173`-`5179`.
+## Checks
+
+```powershell
+cd backend
+python -m unittest discover -s tests
+python -m compileall -q app
+
+cd ..\frontend
+npm run build
+```
