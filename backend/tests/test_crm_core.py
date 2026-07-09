@@ -6,7 +6,7 @@ from datetime import date
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services import crm_store
+from app.services import crm_store, emails_service
 
 
 class CrmCoreTests(unittest.TestCase):
@@ -111,6 +111,27 @@ class CrmCoreTests(unittest.TestCase):
         response = self.client.get("/api/emails")
         self.assertEqual(response.status_code, 503)
         self.assertIn("MAIL_IMAP_HOST", response.json()["detail"])
+
+    def test_email_imap_failure_keeps_cors_response(self):
+        os.environ["MAIL_IMAP_HOST"] = "imap.example.com"
+        os.environ["MAIL_IMAP_USERNAME"] = "user@example.com"
+        os.environ["MAIL_IMAP_PASSWORD"] = "secret"
+        original_connection = emails_service.imaplib.IMAP4_SSL
+
+        class FailingMailbox:
+            def __init__(self, *_args, **_kwargs):
+                raise emails_service.imaplib.IMAP4.error("login failed")
+
+        try:
+            emails_service.imaplib.IMAP4_SSL = FailingMailbox
+            response = self.client.get("/api/emails", headers={"Origin": "http://127.0.0.1:5173"})
+        finally:
+            emails_service.imaplib.IMAP4_SSL = original_connection
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers["access-control-allow-origin"], "http://127.0.0.1:5173")
+        self.assertIn("Could not load mailbox", response.json()["detail"])
+        self.assertIn("login failed", response.json()["detail"])
 
     def test_can_save_mail_settings(self):
         response = self.client.post(

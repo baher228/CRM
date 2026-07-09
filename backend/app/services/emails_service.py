@@ -19,25 +19,28 @@ def list_emails(limit: int = 25) -> list[EmailMessage]:
     if not settings.host or not settings.username or not password:
         raise RuntimeError("Mail IMAP is not configured. Set MAIL_IMAP_HOST, MAIL_IMAP_USERNAME, and MAIL_IMAP_PASSWORD.")
 
-    connection_cls = imaplib.IMAP4_SSL if settings.use_ssl else imaplib.IMAP4
-    with connection_cls(settings.host, settings.port) as mailbox:
-        mailbox.login(settings.username, password)
-        mailbox.select(settings.folder, readonly=True)
-        status, data = mailbox.search(None, "ALL")
-        if status != "OK" or not data:
-            return []
+    try:
+        connection_cls = imaplib.IMAP4_SSL if settings.use_ssl else imaplib.IMAP4
+        with connection_cls(settings.host, settings.port) as mailbox:
+            mailbox.login(settings.username, password)
+            mailbox.select(settings.folder, readonly=True)
+            status, data = mailbox.search(None, "ALL")
+            if status != "OK" or not data:
+                return []
 
-        ids = data[0].split()[-limit:]
-        messages: list[EmailMessage] = []
-        for index, message_id in enumerate(reversed(ids), start=1):
-            status, fetched = mailbox.fetch(message_id, "(FLAGS BODY.PEEK[])")
-            if status != "OK" or not fetched:
-                continue
-            raw = next((part[1] for part in fetched if isinstance(part, tuple)), b"")
-            flags = next((part.decode(errors="ignore") for part in fetched if isinstance(part, bytes)), "")
-            parsed = email.message_from_bytes(raw)
-            messages.append(_to_email_message(index, parsed, "\\Seen" not in flags))
-        return messages
+            ids = data[0].split()[-limit:]
+            messages: list[EmailMessage] = []
+            for index, message_id in enumerate(reversed(ids), start=1):
+                status, fetched = mailbox.fetch(message_id, "(FLAGS BODY.PEEK[])")
+                if status != "OK" or not fetched:
+                    continue
+                raw = next((part[1] for part in fetched if isinstance(part, tuple)), b"")
+                flags = next((part.decode(errors="ignore") for part in fetched if isinstance(part, bytes)), "")
+                parsed = email.message_from_bytes(raw)
+                messages.append(_to_email_message(index, parsed, "\\Seen" not in flags))
+            return messages
+    except (imaplib.IMAP4.error, OSError, TimeoutError) as exc:
+        raise RuntimeError(f"Could not load mailbox: {_error_message(exc)}") from exc
 
 
 def get_mail_settings() -> MailSettingsResponse:
@@ -141,3 +144,9 @@ def _setting(name: str, default: str = "") -> str:
 
 def _truthy(value: str) -> bool:
     return str(value or "").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _error_message(exc: Exception) -> str:
+    if exc.args and isinstance(exc.args[0], bytes):
+        return exc.args[0].decode(errors="replace")
+    return str(exc)

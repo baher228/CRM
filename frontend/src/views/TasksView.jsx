@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ListPlus, RotateCcw, Trash2 } from "lucide-react";
 
 import { createTask, deleteTask, fetchResource, updateTask } from "../api";
-import { StatusBadge, TableView } from "../components/common";
+import { ConfirmDialog, StatusBadge, TableView } from "../components/common";
 import { formatDate } from "../utils/format";
 
 const initialForm = {
@@ -21,6 +21,8 @@ export function TasksView() {
   const [form, setForm] = useState(initialForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [taskToDelete, setTaskToDelete] = useState(null);
+  const [deletingTask, setDeletingTask] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -99,19 +101,23 @@ export function TasksView() {
     }
   }
 
-  async function removeTask(task) {
-    if (!window.confirm(`Delete "${task.title}"? This cannot be undone.`)) {
+  async function confirmDeleteTask() {
+    if (!taskToDelete) {
       return;
     }
 
     setError("");
     setMessage("");
+    setDeletingTask(true);
     try {
-      await deleteTask(task.id);
-      setTasks((current) => current.filter((item) => item.id !== task.id));
+      await deleteTask(taskToDelete.id);
+      setTasks((current) => current.filter((item) => item.id !== taskToDelete.id));
       setMessage("Follow-up deleted");
+      setTaskToDelete(null);
     } catch (requestError) {
       setError(requestError.message);
+    } finally {
+      setDeletingTask(false);
     }
   }
 
@@ -242,7 +248,7 @@ export function TasksView() {
                     Done
                   </button>
                 )}
-                <button className="reject-action" onClick={() => removeTask(task)} type="button">
+                <button className="reject-action" onClick={() => setTaskToDelete(task)} type="button">
                   <Trash2 size={14} aria-hidden="true" />
                   Delete
                 </button>
@@ -250,6 +256,19 @@ export function TasksView() {
             </td>
           </tr>
         )}
+      />
+
+      <ConfirmDialog
+        busy={deletingTask}
+        description={taskToDelete ? `"${taskToDelete.title}" will be removed from follow-ups.` : ""}
+        onCancel={() => {
+          if (!deletingTask) {
+            setTaskToDelete(null);
+          }
+        }}
+        onConfirm={confirmDeleteTask}
+        open={Boolean(taskToDelete)}
+        title="Delete follow-up?"
       />
     </div>
   );

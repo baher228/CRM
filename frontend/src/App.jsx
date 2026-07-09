@@ -312,6 +312,7 @@ export function App() {
             const Icon = tab.icon;
             return (
               <button
+                aria-current={tab.id === activeTab ? "page" : undefined}
                 className={tab.id === activeTab ? "active" : ""}
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}

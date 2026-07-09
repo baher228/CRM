@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Trash2, UserPlus } from "lucide-react";
 
 import { createClient, deleteClient } from "../api";
-import { StatusBadge, TableView } from "../components/common";
+import { ConfirmDialog, StatusBadge, TableView } from "../components/common";
 import { formatCurrency, formatDate, formatDomain } from "../utils/format";
 
 const emptyForm = {
@@ -25,6 +25,7 @@ export function ClientsView({ rows, onClientCreated, onClientDeleted }) {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [busyClientId, setBusyClientId] = useState(null);
+  const [clientToDelete, setClientToDelete] = useState(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -67,18 +68,19 @@ export function ClientsView({ rows, onClientCreated, onClientDeleted }) {
     }
   }
 
-  async function removeClient(client) {
-    if (!window.confirm(`Delete ${client.name}? This cannot be undone.`)) {
+  async function confirmDeleteClient() {
+    if (!clientToDelete) {
       return;
     }
 
-    setBusyClientId(client.id);
+    setBusyClientId(clientToDelete.id);
     setMessage("");
     setError("");
     try {
-      await deleteClient(client.id);
-      onClientDeleted(client.id);
+      await deleteClient(clientToDelete.id);
+      onClientDeleted(clientToDelete.id);
       setMessage("Contact deleted");
+      setClientToDelete(null);
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -255,7 +257,7 @@ export function ClientsView({ rows, onClientCreated, onClientDeleted }) {
             <td>
               {client.last_sync_message || client.sync_status || "-"}
               <div className="row-actions">
-                <button className="reject-action" disabled={busyClientId === client.id} onClick={() => removeClient(client)} type="button">
+                <button className="reject-action" disabled={busyClientId === client.id} onClick={() => setClientToDelete(client)} type="button">
                   <Trash2 size={14} aria-hidden="true" />
                   Delete
                 </button>
@@ -263,6 +265,15 @@ export function ClientsView({ rows, onClientCreated, onClientDeleted }) {
             </td>
           </tr>
         )}
+      />
+
+      <ConfirmDialog
+        busy={Boolean(clientToDelete && busyClientId === clientToDelete.id)}
+        description={clientToDelete ? `${clientToDelete.name} will be removed from the local CRM.` : ""}
+        onCancel={() => setClientToDelete(null)}
+        onConfirm={confirmDeleteClient}
+        open={Boolean(clientToDelete)}
+        title="Delete contact?"
       />
     </div>
   );

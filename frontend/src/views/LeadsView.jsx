@@ -12,7 +12,7 @@ import {
   rejectLead,
   updateLead,
 } from "../api";
-import { StatusBadge, TableView } from "../components/common";
+import { ConfirmDialog, StatusBadge, TableView } from "../components/common";
 import {
   availabilityTone,
   draftEmailHref,
@@ -59,6 +59,7 @@ export function LeadsView({ rows, onLeadCreated, onLeadDeleted, onLeadUpdated, o
   const [bulkStatus, setBulkStatus] = useState("Reviewing");
   const [showAddForm, setShowAddForm] = useState(false);
   const [leadForm, setLeadForm] = useState(emptyLeadForm);
+  const [leadToDelete, setLeadToDelete] = useState(null);
   const [savingLead, setSavingLead] = useState(false);
   const [activity, setActivity] = useState([]);
   const [activityLoading, setActivityLoading] = useState(false);
@@ -256,24 +257,25 @@ export function LeadsView({ rows, onLeadCreated, onLeadDeleted, onLeadUpdated, o
     }
   }
 
-  async function removeLead(lead) {
-    if (!window.confirm(`Delete ${leadTitle(lead)}? This cannot be undone.`)) {
+  async function confirmDeleteLead() {
+    if (!leadToDelete) {
       return;
     }
 
-    setBusyLeadId(lead.id);
+    setBusyLeadId(leadToDelete.id);
     setActionError("");
     try {
-      await deleteLead(lead.id);
-      onLeadDeleted(lead.id);
+      await deleteLead(leadToDelete.id);
+      onLeadDeleted(leadToDelete.id);
       setSelectedLeadIds((current) => {
         const next = new Set(current);
-        next.delete(lead.id);
+        next.delete(leadToDelete.id);
         return next;
       });
-      if (selectedLead?.id === lead.id) {
+      if (selectedLead?.id === leadToDelete.id) {
         setSelectedLead(null);
       }
+      setLeadToDelete(null);
     } catch (error) {
       setActionError(error.message);
     } finally {
@@ -787,7 +789,7 @@ export function LeadsView({ rows, onLeadCreated, onLeadDeleted, onLeadUpdated, o
                       Source
                     </a>
                   ) : null}
-                  <button className="reject-action" disabled={busyLeadId === lead.id} onClick={() => removeLead(lead)} type="button">
+                  <button className="reject-action" disabled={busyLeadId === lead.id} onClick={() => setLeadToDelete(lead)} type="button">
                     <Trash2 size={14} aria-hidden="true" />
                     Delete
                   </button>
@@ -821,6 +823,15 @@ export function LeadsView({ rows, onLeadCreated, onLeadDeleted, onLeadUpdated, o
         />
 
       </div>
+
+      <ConfirmDialog
+        busy={Boolean(leadToDelete && busyLeadId === leadToDelete.id)}
+        description={leadToDelete ? `${leadTitle(leadToDelete)} will be removed from the pipeline.` : ""}
+        onCancel={() => setLeadToDelete(null)}
+        onConfirm={confirmDeleteLead}
+        open={Boolean(leadToDelete)}
+        title="Delete lead?"
+      />
     </div>
   );
 }
