@@ -1,14 +1,11 @@
 from datetime import datetime
-from typing import Any
 
+from app import platform_db
 from app.data import LEADS
 from app.lead_discovery.models import DiscoveryCompanyResult
-from app.lead_enrichment.clients.attio_client import AttioClient, record_id_from_response
-from app.lead_enrichment.clients.http import ApiClientError
 from app.lead_enrichment.config import EnrichmentSettings
 from app.schemas import Lead, LeadBulkRequest, LeadBulkResponse, LeadCreateRequest, LeadStatus, LeadUpdateRequest
 from app.services import crm_store
-from app.services.attio_formatting import attio_person_name, attio_phone_number
 from app.services.contact_lookup_service import find_contact_for_lead
 from app.services.draft_email_service import draft_email_for_lead
 from app.services.lead_discovery_mapper import (
@@ -20,29 +17,37 @@ from app.services.lead_discovery_mapper import (
     result_to_lead,
 )
 from app.services.lead_scoring import lead_sort_key, score_lead, with_availability
-from app.services.lead_sources import canonical_url_key, company_domain, first_known, is_known, utc_now
+from app.services.lead_sources import canonical_url_key, utc_now
+from app.v1 import core_service as v1_service
+from app.v1 import models as v1_models
 
 
 def list_leads() -> list[Lead]:
     settings = EnrichmentSettings()
-    leads = _with_priority(_load_discovered_leads())
+    leads = _with_priority(crm_store.list_leads())
     if settings.crm_include_demo_leads:
-        leads.extend(LEADS)
+        existing_ids = {lead.id for lead in leads}
+        leads.extend(lead for lead in LEADS if lead.id not in existing_ids)
     return sorted(leads, key=lead_sort_key)
 
 
 def get_lead(lead_id: int) -> Lead | None:
-    return next((lead for lead in _load_discovered_leads() if lead.id == lead_id), None)
+    return crm_store.get_lead(lead_id)
 
 
 def known_discovery_keys() -> set[str]:
     keys: set[str] = set()
-    for lead in _with_priority(_load_discovered_leads()):
+    for lead in _with_priority(crm_store.list_leads()):
         keys.add(lead_key(lead))
         for url in [lead.contract_url, lead.website, *lead.source_urls]:
-            url_key = canonical_url_key(url)
-            if url_key:
-                keys.add(url_key)
+            key = canonical_url_key(url)
+            if key:
+                keys.add(key)
+    try:
+        with platform_db.connect() as conn:
+            keys.update(row["dedupe_key"] for row in conn.execute("SELECT dedupe_key FROM tender_notices"))
+    except Exception:
+        pass
     return {key for key in keys if key}
 
 
@@ -51,46 +56,38 @@ def discovery_key_for_url(url: str) -> str:
 
 
 def add_discovered_leads(results: list[DiscoveryCompanyResult]) -> None:
-    discovered_leads = _with_priority(_load_discovered_leads())
-    existing_keys = {lead_key(lead): index for index, lead in enumerate(discovered_leads)}
-    next_id = _next_lead_id(discovered_leads)
-    changed = False
-
+    existing = crm_store.list_leads()
+    by_key = {lead_key(lead): lead for lead in existing}
+    next_id = max([lead.id for lead in [*LEADS, *existing]], default=0) + 1
     for result in results:
-        if not is_persistable_result(result):
-            continue
-        if not has_useful_result(result):
+        if not is_persistable_result(result) or not has_useful_result(result):
             continue
         key = result_key(result)
-        if key in existing_keys:
-            index = existing_keys[key]
-            discovered_leads[index] = merge_result_into_lead(discovered_leads[index], result)
-            changed = True
-            continue
-        lead = result_to_lead(result, next_id)
-        discovered_leads.append(lead)
-        existing_keys[lead_key(lead)] = len(discovered_leads) - 1
-        next_id += 1
-        changed = True
-
-    if changed:
-        _save_discovered_leads(discovered_leads)
+        if key in by_key:
+            merged = merge_result_into_lead(by_key[key], result)
+            crm_store.save_lead(merged)
+            by_key[key] = merged
+        else:
+            lead = result_to_lead(result, next_id)
+            crm_store.create_lead(lead)
+            by_key[lead_key(lead)] = lead
+            next_id += 1
+        _persist_tender(result)
 
 
 def update_lead(lead_id: int, request: LeadUpdateRequest) -> Lead | None:
-    leads = _load_discovered_leads()
-    for index, lead in enumerate(leads):
-        if lead.id != lead_id:
-            continue
-        update = request.model_dump(exclude_unset=True)
-        leads[index] = score_lead(lead.model_copy(update=update))
-        _save_discovered_leads(leads)
-        return leads[index]
-    return None
+    lead = get_lead(lead_id)
+    if not lead:
+        return None
+    update = {
+        key: value.strip() if isinstance(value, str) else value
+        for key, value in request.model_dump(exclude_unset=True).items()
+    }
+    return crm_store.save_lead(score_lead(lead.model_copy(update=update)))
 
 
 def create_lead(request: LeadCreateRequest) -> Lead:
-    today = utc_now().date()
+    now = utc_now()
     lead = Lead(
         id=0,
         name=request.name.strip(),
@@ -102,11 +99,13 @@ def create_lead(request: LeadCreateRequest) -> Lead:
         confidence_score=request.confidence_score,
         outreach_angle=request.outreach_angle.strip(),
         estimated_value=request.estimated_value,
-        created_at=today,
+        created_at=now.date(),
         manual_notes=request.manual_notes.strip(),
         next_action=request.next_action.strip(),
-        first_seen_at=utc_now(),
-        last_seen_at=utc_now(),
+        first_seen_at=now,
+        last_seen_at=now,
+        sync_status="Local",
+        last_sync_message="Saved in CRM Workspace",
     )
     return crm_store.create_lead(score_lead(with_availability(lead)))
 
@@ -119,10 +118,6 @@ def bulk_update_leads(request: LeadBulkRequest) -> LeadBulkResponse:
     updated: list[Lead] = []
     failed = 0
     for lead_id in request.lead_ids:
-        lead = get_lead(lead_id)
-        if not lead:
-            failed += 1
-            continue
         if request.action == "reject":
             next_lead = reject_lead(lead_id)
         elif request.action == "status" and request.status:
@@ -139,213 +134,194 @@ def bulk_update_leads(request: LeadBulkRequest) -> LeadBulkResponse:
 
 
 def reject_lead(lead_id: int) -> Lead | None:
-    leads = _load_discovered_leads()
-    for index, lead in enumerate(leads):
-        if lead.id != lead_id:
-            continue
-        leads[index] = score_lead(
+    lead = get_lead(lead_id)
+    if not lead:
+        return None
+    return crm_store.save_lead(
+        score_lead(
             lead.model_copy(
                 update={
                     "status": LeadStatus.REJECTED,
                     "rejected_at": utc_now(),
-                    "last_sync_message": "Lead rejected",
+                    "sync_status": "Local",
+                    "last_sync_message": "Lead rejected in CRM Workspace",
                 }
             )
         )
-        _save_discovered_leads(leads)
-        return leads[index]
-    return None
-
-
-async def confirm_lead(lead_id: int) -> Lead | None:
-    leads = _load_discovered_leads()
-    for index, lead in enumerate(leads):
-        if lead.id != lead_id:
-            continue
-        confirmed = score_lead(await _confirm_with_attio(lead))
-        leads[index] = confirmed
-        _save_discovered_leads(leads)
-        return confirmed
-    return None
-
-
-async def _confirm_with_attio(lead: Lead) -> Lead:
-    settings = EnrichmentSettings()
-    attio_client: AttioClient | None = None
-    messages = []
-    company_record_id = lead.attio_company_record_id
-    person_record_id = lead.attio_person_record_id
-    draft_email_subject = lead.draft_email_subject
-    draft_email_body = lead.draft_email_body
-    draft_email_generated_at = lead.draft_email_generated_at
-    working_lead = with_availability(lead)
-
-    if working_lead.availability_status == "Unavailable":
-        return working_lead.model_copy(
-            update={
-                "status": LeadStatus.REVIEWING,
-                "last_sync_message": f"Cannot confirm unavailable contract: {working_lead.availability_reason}",
-            }
-        )
-
-    try:
-        settings.require_attio_key()
-        attio_client = AttioClient(settings)
-        company_response = await attio_client.upsert_record(
-            settings.attio_company_object,
-            settings.attio_company_domain_attribute,
-            _company_values(working_lead),
-        )
-        company_record_id = record_id_from_response(company_response)
-        messages.append("Attio company upserted")
-
-        if not working_lead.contact_email:
-            working_lead = await _enrich_contact_before_person_sync(working_lead, settings, messages)
-
-        if working_lead.contact_email:
-            try:
-                person_response = await attio_client.upsert_record(
-                    settings.attio_person_object,
-                    settings.attio_person_email_attribute,
-                    _person_values(working_lead, settings, company_record_id),
-                )
-                person_record_id = record_id_from_response(person_response)
-                messages.append("Attio person upserted")
-                status = LeadStatus.CONFIRMED
-                draft_email_subject, draft_email_body, draft_email_generated_at = await _generate_draft_email(
-                    working_lead,
-                    settings,
-                    messages,
-                )
-                if company_record_id and draft_email_subject and draft_email_body:
-                    await _safe_create_note(
-                        attio_client,
-                        settings.attio_company_object,
-                        company_record_id,
-                        "Draft outreach email",
-                        _draft_email_note(draft_email_subject, draft_email_body),
-                        messages,
-                    )
-                if person_record_id:
-                    await _safe_create_note(
-                        attio_client,
-                        settings.attio_person_object,
-                        person_record_id,
-                        "Tender contact context",
-                        _lead_summary(working_lead),
-                        messages,
-                    )
-            except ApiClientError as exc:
-                messages.append(f"Attio person sync failed: {exc}")
-                status = LeadStatus.REVIEWING
-        else:
-            status = LeadStatus.NEEDS_CONTACT
-            messages.append("No contact email found; person was not created")
-            if company_record_id:
-                await _safe_create_note(
-                    attio_client,
-                    settings.attio_company_object,
-                    company_record_id,
-                    "Lead needs contact",
-                    f"No contact email was found for {working_lead.name}. Source: {working_lead.contract_url or working_lead.website}",
-                    messages,
-                )
-
-        if company_record_id:
-            await _safe_create_note(
-                attio_client,
-                settings.attio_company_object,
-                company_record_id,
-                "Lead confirmation",
-                _lead_summary(working_lead),
-                messages,
-            )
-
-        return working_lead.model_copy(
-            update={
-                "status": status,
-                "confirmed_at": utc_now(),
-                "attio_company_record_id": company_record_id,
-                "attio_person_record_id": person_record_id,
-                "draft_email_subject": draft_email_subject,
-                "draft_email_body": draft_email_body,
-                "draft_email_generated_at": draft_email_generated_at,
-                "last_sync_message": "; ".join(messages),
-            }
-        )
-    except (ApiClientError, ValueError) as exc:
-        return lead.model_copy(
-            update={
-                "status": LeadStatus.REVIEWING,
-                "last_sync_message": f"Attio sync failed: {exc}",
-            }
-        )
-    finally:
-        if attio_client:
-            await attio_client.close()
-
-
-async def _enrich_contact_before_person_sync(
-    lead: Lead,
-    settings: EnrichmentSettings,
-    messages: list[str],
-) -> Lead:
-    try:
-        result = await find_contact_for_lead(lead, settings)
-    except Exception as exc:
-        messages.append(f"Contact lookup failed; company upserted only: {_safe_error_message(exc, settings)}")
-        return lead
-
-    if not result.contact_email:
-        messages.append("Contact lookup completed; no valid email found")
-        return lead
-
-    messages.append("Contact found via Tavily")
-    return lead.model_copy(
-        update={
-            "contact_name": result.contact_name or lead.contact_name,
-            "contact_email": result.contact_email,
-            "email": result.contact_email,
-            "contact_phone": result.contact_phone or lead.contact_phone,
-            "contact_source_url": result.contact_source_url,
-        }
     )
 
 
-async def _generate_draft_email(
-    lead: Lead,
-    settings: EnrichmentSettings,
-    messages: list[str],
-) -> tuple[str, str, datetime | None]:
-    try:
-        draft = await draft_email_for_lead(lead, settings)
-    except Exception as exc:
-        messages.append(f"Draft email failed: {_safe_error_message(exc, settings)}")
-        return lead.draft_email_subject, lead.draft_email_body, lead.draft_email_generated_at
+async def confirm_lead(lead_id: int) -> Lead | None:
+    lead = get_lead(lead_id)
+    if not lead:
+        return None
+    working = with_availability(lead)
+    if working.availability_status == "Unavailable":
+        return crm_store.save_lead(
+            working.model_copy(
+                update={
+                    "status": LeadStatus.REVIEWING,
+                    "last_sync_message": f"Cannot qualify unavailable contract: {working.availability_reason}",
+                }
+            )
+        )
+    settings = EnrichmentSettings()
+    messages = ["Qualified in CRM Workspace"]
+    if not working.contact_email:
+        try:
+            settings.require_read_keys()
+            contact = await find_contact_for_lead(working, settings)
+            if contact.contact_email:
+                working = working.model_copy(
+                    update={
+                        "contact_name": contact.contact_name or working.contact_name,
+                        "contact_email": contact.contact_email,
+                        "email": contact.contact_email,
+                        "contact_phone": contact.contact_phone or working.contact_phone,
+                        "contact_source_url": contact.contact_source_url,
+                    }
+                )
+                messages.append("Contact found")
+        except Exception as exc:
+            messages.append(f"Contact lookup unavailable: {_safe_error_message(exc, settings)}")
+    draft_subject = working.draft_email_subject
+    draft_body = working.draft_email_body
+    draft_at = working.draft_email_generated_at
+    if working.contact_email:
+        try:
+            settings.require_read_keys()
+            draft = await draft_email_for_lead(working, settings)
+            draft_subject, draft_body, draft_at = draft.subject, draft.body, utc_now()
+            messages.append("Draft email generated")
+        except Exception as exc:
+            messages.append(f"Draft unavailable: {_safe_error_message(exc, settings)}")
+    status = LeadStatus.CONFIRMED if working.contact_email else LeadStatus.NEEDS_CONTACT
+    confirmed = score_lead(
+        working.model_copy(
+            update={
+                "status": status,
+                "confirmed_at": utc_now(),
+                "draft_email_subject": draft_subject,
+                "draft_email_body": draft_body,
+                "draft_email_generated_at": draft_at,
+                "sync_status": "Local",
+                "last_sync_message": "; ".join(messages),
+            }
+        )
+    )
+    confirmed = crm_store.save_lead(confirmed)
+    _qualify_into_primary_crm(confirmed)
+    return confirmed
 
-    messages.append("Draft email generated")
-    return draft.subject, draft.body, utc_now()
+
+def _persist_tender(result: DiscoveryCompanyResult) -> None:
+    try:
+        with platform_db.connect() as conn:
+            v1_service.create_tender(
+                conn,
+                v1_models.TenderCreate(
+                    title=result.contract_title if result.contract_title != "Unknown" else result.company_name,
+                    buyer_name=result.buyer_name if result.buyer_name != "Unknown" else result.company_name,
+                    portal_name=result.portal_name if result.portal_name != "Unknown" else "",
+                    contract_url=result.contract_url or "",
+                    contract_value_text=result.contract_value if result.contract_value != "Unknown" else "",
+                    estimated_value_minor=_minor_value(result.contract_value),
+                    deadline=None,
+                    procurement_stage=result.procurement_stage if result.procurement_stage != "Unknown" else "",
+                    contract_status=result.contract_status if result.contract_status != "Unknown" else "",
+                    availability_status=result.availability_status,
+                    availability_reason=result.availability_reason,
+                    confidence_score=result.confidence_score or 0,
+                    source_urls=result.source_urls,
+                    dedupe_key=result.dedupe_key or result_key(result),
+                ),
+            )
+    except Exception:
+        # The compatibility list must remain usable if the primary store is temporarily unavailable.
+        return
+
+
+def _qualify_into_primary_crm(lead: Lead) -> None:
+    result = DiscoveryCompanyResult(
+        domain=lead.company_domain,
+        company_name=lead.company,
+        status="upserted",
+        message="Qualified locally",
+        confidence_score=lead.confidence_score,
+        source_urls=lead.source_urls,
+        contract_title=lead.contract_title,
+        buyer_name=lead.buyer_name,
+        portal_name=lead.portal_name,
+        contract_url=lead.contract_url,
+        contract_value=lead.contract_value,
+        deadline=lead.deadline,
+        procurement_stage=lead.procurement_stage,
+        contract_status=lead.contract_status,
+        availability_status=lead.availability_status,
+        availability_reason=lead.availability_reason,
+        buyer_website=lead.buyer_website,
+        contact_name=lead.contact_name,
+        contact_email=str(lead.contact_email or ""),
+        contact_phone=lead.contact_phone,
+        dedupe_key=lead.dedupe_key or lead_key(lead),
+    )
+    try:
+        with platform_db.connect() as conn:
+            tender = v1_service.create_tender(
+                conn,
+                v1_models.TenderCreate(
+                    title=lead.contract_title if lead.contract_title != "Unknown" else lead.name,
+                    buyer_name=lead.buyer_name if lead.buyer_name != "Unknown" else lead.company,
+                    portal_name=lead.portal_name if lead.portal_name != "Unknown" else "",
+                    contract_url=lead.contract_url or (lead.website if lead.website.startswith("http") else ""),
+                    contract_value_text=lead.contract_value if lead.contract_value != "Unknown" else "",
+                    estimated_value_minor=lead.estimated_value * 100,
+                    procurement_stage=lead.procurement_stage if lead.procurement_stage != "Unknown" else "",
+                    contract_status=lead.contract_status if lead.contract_status != "Unknown" else "",
+                    availability_status=lead.availability_status,
+                    availability_reason=lead.availability_reason,
+                    confidence_score=lead.confidence_score,
+                    priority_score=lead.priority_score,
+                    priority_reasons=lead.priority_reasons,
+                    outreach_angle=lead.outreach_angle,
+                    source_urls=lead.source_urls,
+                    dedupe_key=result.dedupe_key,
+                ),
+            )
+            if not tender.get("linked_opportunity_id"):
+                v1_service.qualify_tender(
+                    conn,
+                    tender["id"],
+                    v1_models.QualificationRequest(
+                        account_name=lead.buyer_name if lead.buyer_name != "Unknown" else lead.company or lead.name,
+                        contact_name=lead.contact_name,
+                        contact_email=lead.contact_email,
+                        opportunity_title=lead.contract_title if lead.contract_title != "Unknown" else lead.name,
+                        value_minor=lead.estimated_value * 100,
+                        next_action=lead.next_action,
+                    ),
+                )
+    except Exception:
+        return
 
 
 def _safe_error_message(exc: Exception, settings: EnrichmentSettings) -> str:
     message = str(exc) or exc.__class__.__name__
-    for secret in (settings.attio_api_token, settings.tavily_api_key, settings.gemini_api_key):
+    for secret in (settings.tavily_api_key, settings.gemini_api_key):
         if secret and len(secret) > 8:
             message = message.replace(secret, "[redacted]")
-    return message[:500]
+    return message[:300]
 
 
 def _with_priority(leads: list[Lead]) -> list[Lead]:
-    changed = False
-    scored = []
+    scored: list[Lead] = []
     for lead in leads:
-        dedupe_key = lead.dedupe_key or lead_key(lead)
         now = utc_now()
         updated = score_lead(
             with_availability(
                 lead.model_copy(
                     update={
-                        "dedupe_key": dedupe_key,
+                        "dedupe_key": lead.dedupe_key or lead_key(lead),
                         "first_seen_at": lead.first_seen_at or now,
                         "last_seen_at": lead.last_seen_at or now,
                         "seen_count": lead.seen_count or 1,
@@ -353,88 +329,19 @@ def _with_priority(leads: list[Lead]) -> list[Lead]:
                 )
             )
         )
-        changed = changed or updated != lead
+        if updated != lead:
+            crm_store.save_lead(updated)
         scored.append(updated)
-    if changed:
-        _save_discovered_leads(scored)
     return scored
 
 
-def _company_values(lead: Lead) -> dict[str, Any]:
-    values: dict[str, Any] = {
-        "name": first_known(lead.buyer_name, lead.company, lead.name) or "Unknown buyer",
-        "description": _lead_summary(lead),
-    }
-    domain = company_domain(lead)
-    if is_known(domain):
-        values["domains"] = [domain]
-    return values
+def _minor_value(value: str) -> int:
+    import re
 
-
-def _person_values(lead: Lead, settings: EnrichmentSettings, company_record_id: str | None = None) -> dict[str, Any]:
-    values: dict[str, Any] = {
-        settings.attio_person_email_attribute: [str(lead.contact_email)],
-    }
-    if is_known(lead.contact_name):
-        values[settings.attio_person_name_attribute] = [attio_person_name(lead.contact_name)]
-    if is_known(lead.contact_phone):
-        values[settings.attio_person_phone_attribute] = [attio_phone_number(lead.contact_phone, settings)]
-    if company_record_id:
-        values[settings.attio_person_company_attribute] = [
-            {
-                "target_object": settings.attio_company_object,
-                "target_record_id": company_record_id,
-            }
-        ]
-    return values
-
-
-def _draft_email_note(subject: str, body: str) -> str:
-    return f"""Subject: {subject}
-
-{body}
-""".strip()
-
-
-async def _safe_create_note(
-    attio_client: AttioClient,
-    object_slug: str,
-    record_id: str,
-    title: str,
-    content: str,
-    messages: list[str],
-) -> None:
+    numbers = re.findall(r"[\d,]+(?:\.\d+)?", value or "")
+    if not numbers:
+        return 0
     try:
-        await attio_client.create_note(object_slug, record_id, title, content)
-    except ApiClientError as exc:
-        messages.append(f"note failed: {exc}")
-
-
-def _lead_summary(lead: Lead) -> str:
-    return f"""Confirmed tender lead: {lead.name}
-
-Buyer: {lead.company}
-Portal: {lead.portal_name}
-Contract URL: {lead.contract_url or lead.website}
-Value: {lead.contract_value}
-Deadline: {lead.deadline}
-Stage: {lead.procurement_stage}
-Availability: {lead.availability_status} - {lead.availability_reason}
-Contact: {lead.contact_name or "Unknown"} {lead.contact_email or ""}
-
-Notes:
-{lead.outreach_angle}
-""".strip()
-
-
-def _next_lead_id(discovered_leads: list[Lead]) -> int:
-    ids = [lead.id for lead in [*LEADS, *discovered_leads]]
-    return max(ids, default=0) + 1
-
-
-def _load_discovered_leads() -> list[Lead]:
-    return crm_store.list_leads()
-
-
-def _save_discovered_leads(leads: list[Lead]) -> None:
-    crm_store.replace_leads(leads)
+        return int(float(numbers[0].replace(",", "")) * 100)
+    except ValueError:
+        return 0

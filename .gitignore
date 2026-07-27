@@ -15,6 +15,7 @@ frontend/dist/
 frontend/*.log
 
 .playwright-cli/
+output/playwright/
 .env
 .vite-*.err
 .vite-*.log

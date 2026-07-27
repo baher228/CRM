@@ -104,11 +104,12 @@ class DiscoveryRunRequest(BaseModel):
     open_notices_only: bool = True
 
 
-DiscoveryPhase = Literal["queued", "searching", "extracting", "parsing", "syncing", "completed", "failed"]
+DiscoveryPhase = Literal["queued", "searching", "extracting", "parsing", "saving", "syncing", "completed", "cancelled", "failed"]
 DiscoveryRowStatus = Literal[
     "searching",
     "extracting",
     "parsing",
+    "saving",
     "syncing",
     "upserted",
     "skipped",

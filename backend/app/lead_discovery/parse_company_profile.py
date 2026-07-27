@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -75,10 +76,15 @@ async def parseCompanyProfile(
     region: str | None,
     domain: str,
     pages: list[ExtractedCompanyPage],
-    gemini_client: GeminiClient,
+    gemini_client: GeminiClient | None,
 ) -> CompanyProfile:
+    if gemini_client is None:
+        return _fallback_profile(niche, region, domain, pages)
     prompt = _build_prompt(niche, region, domain, pages)
-    payload = await gemini_client.generate_json(prompt, COMPANY_PROFILE_SCHEMA)
+    try:
+        payload = await gemini_client.generate_json(prompt, COMPANY_PROFILE_SCHEMA)
+    except Exception:
+        return _fallback_profile(niche, region, domain, pages)
     source_url = next((page.url for page in pages if not page.failed), "")
     payload["portal_domain"] = _clean_unknown(payload.get("portal_domain")) or domain
     payload["contract_url"] = _best_contract_url(payload.get("contract_url"), source_url)
@@ -92,6 +98,51 @@ async def parseCompanyProfile(
     )
     payload["domain"] = _best_domain(payload, domain)
     return CompanyProfile.model_validate(payload)
+
+
+def _fallback_profile(
+    niche: str,
+    region: str | None,
+    domain: str,
+    pages: list[ExtractedCompanyPage],
+) -> CompanyProfile:
+    available = [page for page in pages if not page.failed and page.content.strip()]
+    page = available[0] if available else next((item for item in pages if not item.failed), None)
+    content = page.content if page else ""
+    title = (page.title.strip() if page and page.title.strip() else niche.strip()) or "Public contract opportunity"
+    buyer = _match(content, r"(?:buyer|contracting authority|organisation)\s*[:\-]\s*([^\n]{3,120})", re.I) or "Unknown"
+    value = _match(content, r"(?:value|contract value)\s*[:\-]?\s*(£\s?[\d,.]+(?:\s*(?:million|thousand|m|k))?)", re.I) or "Unknown"
+    deadline = _match(content, r"(?:deadline|closing date|submission date)\s*[:\-]\s*([^\n]{4,80})", re.I) or "Unknown"
+    email = _match(content, r"\b([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})\b", re.I)
+    lower = content.lower()
+    status = "Open" if any(word in lower for word in ("open", "apply", "submission deadline")) else "Unknown"
+    signals = [term for term in ("tender", "procurement", "framework", "contract") if term in lower]
+    source_urls = [item.url for item in available]
+    return CompanyProfile(
+        company_name=buyer if buyer != "Unknown" else title,
+        domain=normalize_domain(domain),
+        contract_title=title,
+        buyer_name=buyer,
+        portal_name=domain,
+        portal_domain=domain,
+        contract_url=_best_contract_url("", page.url if page else ""),
+        contract_value=value,
+        deadline=deadline,
+        contract_status=status,
+        contact_email=email,
+        location=region or "Unknown",
+        services=[niche],
+        industry=niche,
+        contract_or_procurement_signals=signals,
+        outreach_angle=f"Public opportunity matching {niche}" + (f" in {region}" if region else ""),
+        confidence_score=45 if available else 15,
+        source_urls=source_urls,
+    )
+
+
+def _match(text: str, pattern: str, flags: int = 0) -> str:
+    match = re.search(pattern, text, flags)
+    return match.group(1).strip(" .,:;\t") if match else ""
 
 
 def parse_company_profile_json(payload: str) -> CompanyProfile:

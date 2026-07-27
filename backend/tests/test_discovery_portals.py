@@ -7,10 +7,10 @@ from app.main import app
 
 class DiscoveryPortalTests(unittest.TestCase):
     def test_portal_metadata_endpoint_returns_backend_registry(self):
-        response = TestClient(app).get("/api/discovery/portals", params={"niche": "nhs facilities", "region": "London"})
+        response = TestClient(app).get("/api/v1/discovery/portals", params={"niche": "nhs facilities", "region": "London"})
 
         self.assertEqual(response.status_code, 200)
-        portals = response.json()
+        portals = response.json()["items"]
         self.assertGreater(len(portals), 0)
         self.assertTrue({"name", "domains", "default_selected", "priority", "label"} <= set(portals[0]))
         self.assertIn("Find a Tender Service", {portal["name"] for portal in portals})

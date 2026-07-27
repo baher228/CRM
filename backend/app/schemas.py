@@ -43,7 +43,6 @@ class Client(BaseModel):
     sync_status: str = "Local"
     created_at: datetime | None = None
     updated_at: datetime | None = None
-    attio_person_record_id: str | None = None
     last_sync_message: str = ""
 
     @field_validator("email", mode="before")
@@ -140,8 +139,6 @@ class Lead(BaseModel):
     contact_phone: str = ""
     contact_source_url: str = ""
     buyer_website: str = ""
-    attio_company_record_id: str | None = None
-    attio_person_record_id: str | None = None
     confirmed_at: datetime | None = None
     rejected_at: datetime | None = None
     draft_email_subject: str = ""
@@ -266,7 +263,6 @@ class CalendarItem(BaseModel):
     related_to: str
     notes: str
     related_client_id: int | None = None
-    attio_task_created: bool = False
     last_sync_message: str = ""
     sync_status: str = "Local"
     created_at: datetime | None = None
@@ -300,7 +296,6 @@ class Task(BaseModel):
     priority: Priority = Priority.MEDIUM
     notes: str = ""
     sync_status: str = "Local"
-    attio_task_created: bool = False
     last_sync_message: str = ""
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -314,7 +309,6 @@ class TaskCreateRequest(BaseModel):
     related_to: str = ""
     priority: Priority = Priority.MEDIUM
     notes: str = ""
-    sync_to_attio: bool = False
 
 
 class TaskUpdateRequest(BaseModel):
@@ -378,23 +372,3 @@ class IntegrationStatus(BaseModel):
 class SettingsHealthResponse(BaseModel):
     database_path: str
     integrations: list[IntegrationStatus]
-    daybreak_enabled: bool = False
-
-
-class MailSettingsResponse(BaseModel):
-    host: str = ""
-    port: int = 993
-    username: str = ""
-    folder: str = "INBOX"
-    use_ssl: bool = True
-    configured: bool = False
-    password_saved: bool = False
-
-
-class MailSettingsRequest(BaseModel):
-    host: str = Field(min_length=1)
-    port: int = Field(default=993, ge=1, le=65535)
-    username: str = Field(min_length=1)
-    password: str = ""
-    folder: str = "INBOX"
-    use_ssl: bool = True

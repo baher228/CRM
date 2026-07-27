@@ -16,11 +16,7 @@ router = APIRouter()
 
 @router.post("/briefing/generate", response_model=Briefing)
 async def generate_briefing_route(request: GenerateBriefingRequest | None = None) -> Briefing:
-    """Generate a Daybreak morning briefing.
-
-    Designed to be triggered by n8n webhook on a cron schedule.
-    Can also be called manually from the frontend.
-    """
+    """Generate the local Today briefing."""
     if request is None:
         request = GenerateBriefingRequest()
     try:
@@ -31,11 +27,11 @@ async def generate_briefing_route(request: GenerateBriefingRequest | None = None
 
 @router.get("/briefing/latest", response_model=Briefing | None)
 async def get_latest_briefing_route() -> Briefing | None:
-    """Return the most recently generated briefing (in-memory)."""
+    """Return the most recently generated persisted briefing."""
     return get_latest_briefing()
 
 
 @router.post("/briefing/approve", response_model=ApproveActionResponse)
 async def approve_action_route(request: ApproveActionRequest) -> ApproveActionResponse:
-    """Approve a briefing item action. Optionally creates a task in Attio."""
+    """Approve a briefing item and create a local task."""
     return await approve_action(request)

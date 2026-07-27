@@ -1,146 +1,114 @@
 # CRM Workspace
 
-A local-first CRM workspace with a FastAPI backend and React/Vite frontend. The core product now focuses on contacts, leads, pipeline follow-up, tasks, notes, calendar, search, dashboard summaries, and integration health.
+CRM Workspace is a local-first, single-operator business system for Windows. It owns the complete operating record from a new lead or tender through sales, proposals, contracts, delivery, invoicing, payment, client health, and renewal.
 
-Daybreak is deferred. Its backend code remains available, but the frontend navigation hides it unless `VITE_ENABLE_DAYBREAK=true`.
+The application runs as one FastAPI process on `127.0.0.1`, serves the production React build, and stores its SQLite database and generated documents under `%LOCALAPPDATA%\CRMWorkspace` by default. Google Workspace and Stripe are optional integrations; local work remains available when either is disconnected.
 
-## Structure
+## What is included
 
-- `backend/` - FastAPI API, SQLite CRM store, Attio/Tavily/Gemini workflows, and optional seed data.
-- `frontend/` - React/Vite CRM interface.
-- `daybreak_n8n_workflow.json` - optional Daybreak scheduling workflow, not part of the default CRM flow.
+- Today operating centre for overdue work, replies, meetings, tender deadlines, deal risk, blocked delivery, unpaid invoices, and renewals
+- Accounts and contacts with record-360 timelines, tags, custom fields, duplicate merging, archive/restore, saved views, and global search
+- Lead and tender qualification with provenance, deduplication, durable discovery runs, CSV import previews, and exports
+- Configurable opportunity pipeline with board and table views, forecast values, stages, win/loss state, and optimistic conflict protection
+- Gmail thread cache, linked messages, scheduled sends, templates, sequences, reply/bounce/opt-out stopping, and daily send caps
+- Calendar records and Google synchronization jobs
+- Drive-backed document templates, immutable PDF versions, proposals, contracts, catalog items, and commercial snapshots
+- Projects, milestones, tasks, time, expenses, delivery profitability, client health, risks, and renewals
+- UK-oriented invoices, VAT configuration, credit notes, partial payments, refunds, immutable PDFs, balanced append-only journals, aging, and Stripe Checkout collection
+- Allowlisted automations with dry-run previews, notifications, retry history, recursion guards, and durable jobs
+- Backup validation, staged restore, audit records, numbered migrations, SQLite WAL/foreign keys/FTS5, and optimistic `version` fields
+- Responsive keyboard-accessible React interface with deep links, `Ctrl/Cmd+K` search, and `Ctrl/Cmd+N` quick create
 
-Backend modules:
+## Run in development
 
-- `backend/app/main.py` - app setup, CORS, and route registration.
-- `backend/app/schemas.py` - shared Pydantic API models.
-- `backend/app/data.py` - optional seed records for local demos.
-- `backend/app/routes/` - thin FastAPI route modules.
-- `backend/app/services/` - CRM store, orchestration, and reusable helpers.
-- `backend/app/lead_enrichment/` - Attio lead enrichment workflow.
-- `backend/app/lead_discovery/` - public contract discovery workflow.
-
-## Backend
+Requirements: Python 3.12+, Node.js 20+, and PowerShell.
 
 ```powershell
 cd backend
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+Copy-Item .env.example .env
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Copy `backend/.env.example` to `backend/.env` and fill in real API keys for Attio, Tavily, Gemini, and IMAP mail when you want those integrations.
-
-Local CRM data is stored in SQLite at `backend/crm.sqlite3` by default. Set `CRM_DB_PATH` to use a different file.
-
-Seed/demo data is opt-in:
-
-- `CRM_INCLUDE_DEMO_DATA=true` imports demo contacts and calendar items.
-- `CRM_INCLUDE_DEMO_LEADS=true` also imports demo leads.
-
-Legacy ignored JSON files such as `manual_clients.json`, `manual_calendar.json`, and `discovered_leads.json` are imported once into SQLite if present.
-
-The Emails tab can save a local IMAP mailbox from the web UI. You can also configure the same mailbox with backend env vars:
-
-- `MAIL_IMAP_HOST`
-- `MAIL_IMAP_PORT`
-- `MAIL_IMAP_USERNAME`
-- `MAIL_IMAP_PASSWORD`
-- `MAIL_IMAP_FOLDER`
-- `MAIL_IMAP_USE_SSL`
-
-## Core API
-
-- `GET /api/health`
-- `GET /api/dashboard`
-- `GET /api/settings/health`
-- `GET /api/settings/mail`
-- `POST /api/settings/mail`
-- `GET /api/search?q=...`
-- `GET /api/clients`
-- `POST /api/clients`
-- `PATCH /api/clients/{client_id}`
-- `DELETE /api/clients/{client_id}`
-- `GET /api/leads`
-- `POST /api/leads`
-- `PATCH /api/leads/{lead_id}`
-- `DELETE /api/leads/{lead_id}`
-- `POST /api/leads/bulk`
-- `POST /api/leads/{lead_id}/confirm`
-- `POST /api/leads/{lead_id}/reject`
-- `GET /api/tasks`
-- `POST /api/tasks`
-- `PATCH /api/tasks/{task_id}`
-- `DELETE /api/tasks/{task_id}`
-- `GET /api/notes`
-- `POST /api/notes`
-- `DELETE /api/notes/{note_id}`
-- `GET /api/activity/{related_type}/{related_id}`
-- `GET /api/emails`
-- `GET /api/calendar`
-- `POST /api/calendar`
-- `POST /api/enrichment/run`
-- `GET /api/discovery/portals`
-- `POST /api/discovery/jobs`
-- `GET /api/discovery/jobs/{job_id}`
-- `POST /api/discovery/run`
-
-Daybreak endpoints still exist for deferred use:
-
-- `POST /api/briefing/generate`
-- `GET /api/briefing/latest`
-- `POST /api/briefing/approve`
-
-## Workflows
-
-Run lead enrichment from `backend/`:
-
-```powershell
-python -m app.lead_enrichment.runner --limit 3 --dry-run
-python -m app.lead_enrichment.runner --limit 1 --write
-```
-
-Run public contract discovery from `backend/`:
-
-```powershell
-python -m app.lead_discovery.runner --niche landscaping --region "Austin, TX" --limit 10 --dry-run
-python -m app.lead_discovery.runner --niche landscaping --region "Austin, TX" --limit 5 --write
-```
-
-Trigger discovery through FastAPI:
-
-```powershell
-Invoke-RestMethod -Method Post `
-  -Uri "http://127.0.0.1:8000/api/discovery/run" `
-  -ContentType "application/json" `
-  -Body '{"niche": "landscaping", "region": "Austin, TX", "limit": 10, "dry_run": true}'
-```
-
-## Frontend
+In another terminal:
 
 ```powershell
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open `http://127.0.0.1:5173`. Development mode bypasses the per-install browser session only when `CRM_ENV=development` and `CRM_SECURITY_BYPASS=true`.
 
-Copy `frontend/.env.example` to `frontend/.env` when you need local overrides:
+## Build and run the Windows application
 
-- `VITE_API_BASE_URL=http://localhost:8000/api`
-- `VITE_ENABLE_DAYBREAK=false`
+```powershell
+cd frontend
+npm ci
+npm run build
+cd ..
+.\scripts\Start-CRM.ps1
+```
 
-Set `VITE_ENABLE_DAYBREAK=true` only when you want the deferred Daybreak view back in the navigation.
+The launcher binds exclusively to `127.0.0.1`, starts the hidden FastAPI process, restricts the bootstrap secret to the current Windows account, and opens a signed HttpOnly/SameSite session. Install logon startup with:
 
-## Checks
+```powershell
+.\scripts\Install-CRMStartup.ps1
+```
+
+Create an integrity-checked backup with:
+
+```powershell
+.\scripts\Backup-CRM.ps1 -Destination D:\CRM-Backups
+```
+
+Settings also provides guarded recovery and data operations: CSV imports are mapped and previewed before a separate commit, restores require the operator to type `RESTORE` and are staged for the next launch, and the durable-job view separates ordinary retries from unknown Google/Stripe outcomes that must be reconciled first.
+
+Secrets are entered from Settings and stored through `keyring` in Windows Credential Manager. They are not stored in SQLite, source files, browser state, logs, or backups.
+
+## Integration setup
+
+Google Workspace requires a Google Cloud Desktop OAuth client with Gmail, Calendar, Drive, and identity APIs enabled. Put only the public client ID in `backend/.env`; enter the client secret in Settings, then use Connect Google. Each connection opens a one-time callback listener bound to `127.0.0.1` on an OS-assigned port and closes it after the callback or ten minutes. `GOOGLE_OAUTH_REDIRECT_URI` is an optional fixed callback for deterministic tests or fallback only. The application requests Gmail modify, Calendar events, Drive file, and identity scopes.
+
+Stripe uses a restricted test or live secret entered in Settings. CRM Workspace creates one-use Checkout sessions for an invoice's outstanding balance. The local invoice, allocations, and ledger remain authoritative; provider-generated invoices and automatic tax are disabled.
+
+Tavily and Gemini are optional. Their keys are entered in Settings and are used only for tender discovery, enrichment, scoring, summaries, and drafts. Fake adapters are available through `CRM_INTEGRATIONS_FAKE=true` and `CRM_DISCOVERY_FAKE=true` for deterministic testing.
+
+## Test and release checks
 
 ```powershell
 cd backend
-python -m unittest discover -s tests
-python -m compileall -q app
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m compileall -q app
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -m pip install pip-audit
+.\.venv\Scripts\pip-audit.exe -r requirements.txt
 
 cd ..\frontend
+npm test
 npm run build
+npm audit --audit-level=high
+npx playwright test
 ```
+
+Browser acceptance tests live in `frontend/e2e` and run against deterministic local adapters. Live smoke tests use a dedicated Google account and Stripe sandbox; credentials never enter CI.
+
+Live provider checks are read-only and opt-in. After connecting an isolated Google test account and saving a Stripe test-mode key in Windows Credential Manager, run:
+
+```powershell
+cd backend
+$env:CRM_LIVE_SMOKE = "1"
+.\.venv\Scripts\python.exe -m unittest tests.test_live_providers -v
+Remove-Item Env:CRM_LIVE_SMOKE
+```
+
+Normal test runs skip these checks and never require provider credentials.
+
+## Data and API conventions
+
+The default database is `%LOCALAPPDATA%\CRMWorkspace\crm.sqlite3`. Override it only for development/tests with `CRM_DB_PATH`. Business data uses UTC timestamps, Europe/London scheduling, integer minor currency units, decimal-string quantities, and basis-point tax rates.
+
+The primary API is `/api/v1`. Collection responses use `{items, next_cursor}`; mutable updates carry `version`; stale writes return `409`; external work returns `202` with a durable `job_id`; and side effects require an `Idempotency-Key`. API docs can be enabled locally with `CRM_ENABLE_DOCS=true` and opened at `/api/docs`.
+
+Financial and audit records are append-only. Corrections use credit notes, allocations, refunds, and reversing journals. Business records archive instead of being hard-deleted.

@@ -47,7 +47,8 @@ async def run_discovery_route(request: DiscoveryRunRequest) -> DiscoveryRunRespo
             minimum_value=request.minimum_value,
             open_notices_only=request.open_notices_only,
         )
-        add_discovered_leads(response.results)
+        if not request.dry_run:
+            add_discovered_leads(response.results)
         return response
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

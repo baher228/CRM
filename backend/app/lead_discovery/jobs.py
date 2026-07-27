@@ -61,7 +61,8 @@ async def _run_job(job_id: str, request: DiscoveryRunRequest) -> None:
             open_notices_only=request.open_notices_only,
             progress_callback=lambda event: update_discovery_job(job_id, event),
         )
-        add_discovered_leads(response.results)
+        if not request.dry_run:
+            add_discovered_leads(response.results)
         await update_discovery_job(
             job_id,
             {
