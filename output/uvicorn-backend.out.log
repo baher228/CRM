@@ -752,3 +752,69 @@ INFO:     127.0.0.1:55104 - "GET /api/emails HTTP/1.1" 503 Service Unavailable
 INFO:     127.0.0.1:63545 - "GET /api/dashboard HTTP/1.1" 200 OK
 INFO:     127.0.0.1:53463 - "GET /api/settings/mail HTTP/1.1" 200 OK
 INFO:     127.0.0.1:53463 - "GET /api/emails HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:50132 - "GET /api/settings/mail HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50132 - "GET /api/emails HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:50132 - "GET /api/discovery/portals HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59450 - "GET /api/settings/mail HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59450 - "GET /api/emails HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:53412 - "GET /api/settings/mail HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54464 - "GET /api/settings/mail HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54464 - "GET /api/emails HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:64730 - "GET /api/settings/mail HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61281 - "GET /api/settings/mail HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61281 - "GET /api/emails HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:49316 - "GET /api/settings/mail HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49316 - "GET /api/emails HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:65005 - "GET /api/settings/mail HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65005 - "GET /api/emails HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:58115 - "GET /api/dashboard HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58115 - "GET /api/settings/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58115 - "GET /api/clients HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58115 - "GET /api/leads HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58115 - "GET /api/tasks HTTP/1.1" 200 OK
+ INFO:     127.0.0.1:61553 - "GET /api/v1/dashboard HTTP/1.1" 404 Not Found
+               INFO:     127.0.0.1:58666 - "GET /api/v1/health HTTP/1.1" 200 OK
+ INFO:     127.0.0.1:57053 - "GET /api/v1/dashboard HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57053 - "GET /api/v1/accounts HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57053 - "GET /api/v1/contacts HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57053 - "GET /api/v1/opportunities HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57053 - "GET /api/v1/tenders HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57053 - "GET /api/v1/projects HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57053 - "GET /api/v1/proposals HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57053 - "GET /api/v1/invoices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57053 - "GET /api/v1/reports HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57053 - "GET /api/v1/integrations/google HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57053 - "GET /api/v1/integrations/stripe HTTP/1.1" 200 OK
+       INFO:     127.0.0.1:50320 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50320 - "GET / HTTP/1.1" 200 OK
+  INFO:     127.0.0.1:57733 - "GET / HTTP/1.1" 200 OK
+ INFO:     127.0.0.1:54435 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54007 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50187 - "GET /assets/index-C7kEuxJg.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54007 - "GET /assets/index-C-7zFLqp.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50187 - "GET /api/v1/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54007 - "GET /api/v1/dashboard HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54988 - "GET /api/v1/opportunities HTTP/1.1" 200 OK
+   INFO:     127.0.0.1:51798 - "GET /api/v1/dashboard HTTP/1.1" 200 OK
+ INFO:     127.0.0.1:55604 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55604 - "GET /assets/index-C-7zFLqp.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60424 - "GET /assets/index-C7kEuxJg.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60424 - "GET /api/v1/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55604 - "GET /api/v1/dashboard HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64092 - "GET /api/v1/opportunities HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56527 - "GET /api/v1/leads HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58781 - "GET /pipeline HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58781 - "GET /assets/index-C-7zFLqp.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62854 - "GET /assets/index-C7kEuxJg.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56929 - "GET /api/v1/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62854 - "GET /api/v1/leads HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58781 - "GET /api/v1/opportunities HTTP/1.1" 200 OK
+      INFO:     127.0.0.1:60567 - "GET /api/v1/health HTTP/1.1" 200 OK
+    INFO:     127.0.0.1:55404 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55404 - "GET /api/v1/discovery/runs HTTP/1.1" 200 OK
+ INFO:     127.0.0.1:55409 - "GET /api/v1/sequences HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55409 - "GET /api/v1/automations HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55409 - "GET /api/v1/documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55409 - "GET /api/v1/settings/business HTTP/1.1" 200 OK
+                           INFO:     127.0.0.1:51950 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51950 - "GET /api/v1/session HTTP/1.1" 200 OK

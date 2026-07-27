@@ -12,13 +12,12 @@ from app.lead_discovery.parse_company_profile import parseCompanyProfile
 from app.lead_discovery.search_companies_with_tavily import searchCompaniesWithTavily
 from app.lead_discovery.select_relevant_urls import selectRelevantUrls
 from app.lead_discovery.summary import build_company_summary, compute_discovery_fingerprint
-from app.lead_discovery.upsert_company_to_attio import upsertCompanyToAttio
-from app.lead_enrichment.clients.attio_client import AttioClient
 from app.lead_enrichment.clients.gemini_client import GeminiClient
 from app.lead_enrichment.clients.tavily_client import TavilyClient
 from app.lead_enrichment.logging import configure_logging, log_event
 from app.services.contract_availability import assess_contract_availability
-from app.services.leads_service import discovery_key_for_url, known_discovery_keys
+from app import platform_db
+from app.services.lead_sources import canonical_url_key
 
 
 async def run_discovery(
@@ -37,9 +36,8 @@ async def run_discovery(
     settings.require_discovery_keys()
     requested_limit = limit or settings.discovery_default_limit
 
-    attio_client = AttioClient(settings)
     tavily_client = TavilyClient(settings)
-    gemini_client = GeminiClient(settings)
+    gemini_client = GeminiClient(settings) if settings.gemini_configured else None
 
     try:
         await _publish(
@@ -107,7 +105,7 @@ async def run_discovery(
         )
         semaphore = asyncio.Semaphore(
             min(
-                settings.enrichment_attio_concurrency,
+                settings.enrichment_local_concurrency,
                 settings.enrichment_tavily_concurrency,
                 settings.enrichment_llm_concurrency,
             )
@@ -120,7 +118,6 @@ async def run_discovery(
                     region,
                     candidate,
                     settings,
-                    attio_client,
                     tavily_client,
                     gemini_client,
                     dry_run,
@@ -133,7 +130,6 @@ async def run_discovery(
         results = [*skipped_results, *parsed_results]
         return _response(dry_run, niche, region, requested_limit, len(results), results)
     finally:
-        await attio_client.close()
         await tavily_client.close()
 
 
@@ -142,7 +138,6 @@ async def _run_candidate(
     region,
     candidate,
     settings,
-    attio_client,
     tavily_client,
     gemini_client,
     dry_run,
@@ -208,9 +203,9 @@ async def _run_candidate(
         summary = build_company_summary(profile, niche, region, fingerprint)
         await _publish_result(
             progress_callback,
-            "syncing",
+            "saving",
             profile.domain,
-            "Syncing parsed contract opportunity" if not dry_run else "Preparing dry-run result",
+            "Saving parsed contract opportunity" if not dry_run else "Preparing preview result",
             company_name=profile.company_name,
             confidence_score=profile.confidence_score,
             source_urls=summary.source_urls,
@@ -227,15 +222,10 @@ async def _run_candidate(
             availability_reason=profile.availability_reason,
             availability_checked_at=profile.availability_checked_at,
         )
-        try:
-            message, _record_id = await upsertCompanyToAttio(summary, settings, attio_client, dry_run)
-            result = _result_from_profile(profile, "dry_run" if dry_run else "upserted", message, summary.source_urls)
-            await _publish(progress_callback, phase="syncing", message=message, result=result)
-            return result
-        except Exception as exc:  # noqa: BLE001 - preserve parsed profile when sync fails.
-            result = _result_from_profile(profile, "failed", f"Attio sync failed: {exc}", summary.source_urls)
-            await _publish(progress_callback, phase="syncing", message=result.message, result=result)
-            return result
+        message = "Preview ready" if dry_run else "Saved to CRM Workspace tender inbox"
+        result = _result_from_profile(profile, "dry_run" if dry_run else "upserted", message, summary.source_urls)
+        await _publish(progress_callback, phase="saving", message=message, result=result)
+        return result
     except Exception as exc:  # noqa: BLE001 - keep batch running per company.
         result = DiscoveryCompanyResult(
             domain=candidate.domain,
@@ -353,6 +343,27 @@ def _candidate_known_key(candidate) -> str:
     return ""
 
 
+def discovery_key_for_url(url: str) -> str:
+    return canonical_url_key(url)
+
+
+def known_discovery_keys() -> set[str]:
+    keys: set[str] = set()
+    with platform_db.connect() as conn:
+        for row in conn.execute("SELECT dedupe_key, contract_url FROM tender_notices"):
+            for value in (row["dedupe_key"], row["contract_url"]):
+                if value:
+                    keys.add(str(value))
+                    canonical = canonical_url_key(str(value))
+                    if canonical:
+                        keys.add(canonical)
+        for row in conn.execute("SELECT url FROM tender_sources"):
+            canonical = canonical_url_key(str(row["url"] or ""))
+            if canonical:
+                keys.add(canonical)
+    return keys
+
+
 def _response(
     dry_run: bool,
     niche: str,
@@ -375,12 +386,12 @@ def _response(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Discover public contract opportunities with Tavily and sync them to Attio.")
+    parser = argparse.ArgumentParser(description="Discover public contract opportunities and save them to CRM Workspace.")
     parser.add_argument("--niche", required=True)
     parser.add_argument("--region", default=None)
     parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--dry-run", action="store_true", help="Run without writing back to Attio.")
-    parser.add_argument("--write", action="store_true", help="Write discovered companies to Attio.")
+    parser.add_argument("--dry-run", action="store_true", help="Preview results without saving them.")
+    parser.add_argument("--write", action="store_true", help="Save discovered tenders to CRM Workspace.")
     args = parser.parse_args()
     try:
         response = asyncio.run(

@@ -1,36 +1,29 @@
-"""Daybreak morning briefing — gather, rank, draft, present.
-
-Bounties: Attio (internal CRM), Tavily (external signals), Gemini (rank + draft),
-n8n (trigger via webhook), Superlinked (TODO: ranking), SLNG (TODO: voice).
-"""
+"""Local Today briefing built from CRM Workspace records."""
 
 import json
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Literal
+from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.lead_enrichment.clients.attio_client import AttioClient
-from app.lead_enrichment.clients.gemini_client import GeminiClient
+from app import platform_db
 from app.lead_enrichment.clients.tavily_client import TavilyClient
 from app.lead_enrichment.config import EnrichmentSettings
+from app.v1 import core_service
+from app.v1.models import TaskCreate
 
-
-# ---------------------------------------------------------------------------
-# Models
-# ---------------------------------------------------------------------------
 
 class BriefingSignal(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
     type: Literal["internal", "external"]
-    source: Literal["attio", "tavily"]
+    source: Literal["local", "tavily"]
     company_name: str
     headline: str
     detail: str
     source_url: str | None = None
-    attio_record_id: str | None = None
-    attio_object_slug: str | None = None
+    entity_type: str = ""
+    entity_id: int | None = None
 
 
 class BriefingItem(BaseModel):
@@ -45,344 +38,162 @@ class Briefing(BaseModel):
     generated_at: datetime
     total_signals_gathered: int
     items: list[BriefingItem]
-    superlinked_ranking_applied: bool = False  # TODO: Superlinked integration
-    slng_audio_url: str | None = None  # TODO: SLNG voice briefing
-    n8n_triggered: bool = False
 
 
 class GenerateBriefingRequest(BaseModel):
-    limit: int = Field(default=10, ge=1, le=50, description="Max companies to scan from Attio")
-    n8n_triggered: bool = Field(default=False, description="Set true when called from n8n webhook")
-    write_actions_to_attio: bool = Field(default=False, description="Auto-create tasks in Attio for approved items")
+    limit: int = Field(default=10, ge=1, le=50)
+    include_external: bool = True
 
 
 class ApproveActionRequest(BaseModel):
     item_index: int
-    action_text: str | None = None  # override the drafted action
+    action_text: str | None = None
 
 
 class ApproveActionResponse(BaseModel):
     success: bool
     message: str
-    attio_task_created: bool = False
-
-
-# ---------------------------------------------------------------------------
-# In-memory store for latest briefing (hackathon shortcut)
-# ---------------------------------------------------------------------------
-
-_latest_briefing: Briefing | None = None
+    task_created: bool = False
 
 
 def get_latest_briefing() -> Briefing | None:
-    return _latest_briefing
-
-
-# ---------------------------------------------------------------------------
-# Gather internal signals from Attio
-# ---------------------------------------------------------------------------
-
-async def _gather_internal_signals(
-    settings: EnrichmentSettings,
-    attio_client: AttioClient,
-    limit: int,
-) -> list[BriefingSignal]:
-    """Pull companies from Attio and surface staleness / pipeline signals."""
-    signals: list[BriefingSignal] = []
-
-    try:
-        if settings.attio_lead_list_id and settings.attio_lead_list_id != "your_attio_list_id":
-            raw_records = await attio_client.query_list_entries(settings.attio_lead_list_id, limit)
-        else:
-            raw_records = await attio_client.query_records(settings.attio_lead_object, limit)
-    except Exception:
-        raw_records = []
-
-    for item in raw_records:
-        record = item.get("parent_record") or item.get("record") or item
-        values = record.get("values", {}) if isinstance(record, dict) else {}
-        record_id = _extract_record_id(record, item)
-        object_slug = (
-            record.get("object_slug")
-            or record.get("object")
-            or item.get("parent_object")
-            or settings.attio_lead_object
-        )
-        name = _first_text(values, settings.attio_company_name_attribute) or record.get("name") or "Unknown"
-
-        # Check for enrichment staleness
-        enriched_at = _first_text(values, settings.attio_enriched_at_attribute)
-        summary = _first_text(values, settings.attio_enrichment_summary_attribute)
-
-        if summary:
-            headline = f"Enriched lead in pipeline: {name}"
-            detail = summary[:500] if len(summary) > 500 else summary
-        elif enriched_at:
-            headline = f"Lead {name} was enriched but may need refresh"
-            detail = f"Last enriched at {enriched_at}. Consider re-running enrichment."
-        else:
-            headline = f"Lead {name} has not been enriched yet"
-            detail = f"Company '{name}' is in your CRM but lacks enrichment data. Consider researching."
-
-        signals.append(BriefingSignal(
-            type="internal",
-            source="attio",
-            company_name=name,
-            headline=headline,
-            detail=detail,
-            attio_record_id=str(record_id) if record_id else None,
-            attio_object_slug=str(object_slug),
-        ))
-
-    return signals
-
-
-def _extract_record_id(record: dict, item: dict) -> Any:
-    rid = record.get("id")
-    if isinstance(rid, dict):
-        return rid.get("record_id")
-    return rid or record.get("record_id") or item.get("parent_record_id")
-
-
-def _first_text(values: dict, slug: str) -> str | None:
-    val = values.get(slug)
-    if val is None:
+    with platform_db.connect() as conn:
+        row = conn.execute("SELECT value_json FROM app_settings WHERE key='latest_briefing'").fetchone()
+    if not row:
         return None
-    if isinstance(val, list):
-        if not val:
-            return None
-        val = val[0]
-    if isinstance(val, dict):
-        for key in ("value", "domain", "email_address", "name", "title"):
-            if key in val:
-                return str(val[key])
-        if "option" in val and isinstance(val["option"], dict):
-            return val["option"].get("title")
-    return str(val) if val else None
-
-
-# ---------------------------------------------------------------------------
-# Gather external signals from Tavily
-# ---------------------------------------------------------------------------
-
-async def _gather_external_signals(
-    company_names: list[str],
-    tavily_client: TavilyClient,
-) -> list[BriefingSignal]:
-    """Search Tavily for recent news/signals about CRM companies."""
-    signals: list[BriefingSignal] = []
-
-    for name in company_names[:10]:  # cap to avoid rate limits
-        try:
-            results = await tavily_client.search(
-                f"{name} recent news funding partnership announcement 2026",
-                max_results=3,
-            )
-            for result in results:
-                url = result.get("url", "")
-                title = result.get("title", "")
-                snippet = result.get("content") or result.get("snippet") or ""
-                if title:
-                    signals.append(BriefingSignal(
-                        type="external",
-                        source="tavily",
-                        company_name=name,
-                        headline=title,
-                        detail=snippet[:500],
-                        source_url=url,
-                    ))
-        except Exception:
-            continue  # don't let one company failure break the whole briefing
-
-    return signals
-
-
-# ---------------------------------------------------------------------------
-# Rank + draft actions with Gemini (placeholder for Superlinked)
-# ---------------------------------------------------------------------------
-
-async def _rank_and_draft(
-    signals: list[BriefingSignal],
-    gemini_client: GeminiClient,
-) -> list[BriefingItem]:
-    """Use Gemini to rank top 5 signals and draft an action for each.
-
-    TODO: Replace ranking with Superlinked vector ranking when integrated.
-    """
-    if not signals:
-        return []
-
-    # Build the prompt with all signals
-    signal_texts = []
-    for i, sig in enumerate(signals):
-        signal_texts.append(
-            f"Signal {i}: [{sig.type.upper()}] [{sig.source}] "
-            f"Company: {sig.company_name}\n"
-            f"  Headline: {sig.headline}\n"
-            f"  Detail: {sig.detail[:300]}\n"
-            f"  URL: {sig.source_url or 'N/A'}"
-        )
-
-    prompt = f"""You are Daybreak, an AI chief-of-staff that prepares a morning briefing.
-
-Below are {len(signals)} signals gathered from internal CRM (Attio) and external news (Tavily).
-
-Your job:
-1. Pick the TOP 5 most important/actionable signals.
-2. For each, draft a specific, concise action the user should take.
-3. Explain why this signal matters (1 sentence).
-4. Rate urgency 0-100.
-
-Return a JSON array of exactly 5 objects (or fewer if less signals), each with:
-- "signal_index": the index number from the signals below
-- "drafted_action": a specific 1-2 sentence action to take
-- "reasoning": why this matters (1 sentence)
-- "urgency": integer 0-100
-
-Signals:
-{chr(10).join(signal_texts)}
-
-Return ONLY the JSON array, no other text."""
-
     try:
-        from google.genai import types
-        response = await gemini_client.client.aio.models.generate_content(
-            model=gemini_client.settings.gemini_model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.3,
-            ),
-        )
-        raw = json.loads(response.text or "[]")
-    except Exception:
-        # Fallback: just take first 5 signals with generic actions
-        raw = [
-            {"signal_index": i, "drafted_action": "Review this signal and take action.", "reasoning": "Surfaced in your morning scan.", "urgency": 50}
-            for i in range(min(5, len(signals)))
-        ]
+        return Briefing.model_validate_json(row["value_json"])
+    except ValueError:
+        return None
 
-    items: list[BriefingItem] = []
-    for rank, entry in enumerate(raw[:5], start=1):
-        idx = entry.get("signal_index", 0)
-        if idx < 0 or idx >= len(signals):
-            idx = 0
-        items.append(BriefingItem(
-            rank=rank,
-            signal=signals[idx],
-            drafted_action=entry.get("drafted_action", "Review and act."),
-            reasoning=entry.get("reasoning", "Flagged by Daybreak."),
-            urgency=max(0, min(100, entry.get("urgency", 50))),
-        ))
-
-    return items
-
-
-# ---------------------------------------------------------------------------
-# Main briefing flow
-# ---------------------------------------------------------------------------
 
 async def generate_briefing(request: GenerateBriefingRequest) -> Briefing:
-    """Full Daybreak pipeline: gather → rank → draft → present.
-
-    Called by the /api/briefing/generate endpoint.
-    Can be triggered by n8n webhook on a schedule (e.g. 6am daily).
-    """
-    global _latest_briefing
-
-    settings = EnrichmentSettings()
-    # Only require tavily + gemini for briefing (attio can gracefully degrade)
-    missing = []
-    if not settings.tavily_api_key:
-        missing.append("TAVILY_API_KEY")
-    if not settings.gemini_api_key:
-        missing.append("GEMINI_API_KEY")
-    if missing:
-        raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
-
-    attio_client = AttioClient(settings)
-    tavily_client = TavilyClient(settings)
-    gemini_client = GeminiClient(settings)
-
-    try:
-        # 1. Gather internal signals from Attio
-        internal_signals = await _gather_internal_signals(settings, attio_client, request.limit)
-
-        # 2. Gather external signals from Tavily
-        company_names = list({sig.company_name for sig in internal_signals if sig.company_name != "Unknown"})
-        external_signals = await _gather_external_signals(company_names, tavily_client)
-
-        # 3. Combine all signals
-        all_signals = internal_signals + external_signals
-
-        # ----- SUPERLINKED HOOK -----
-        # TODO: When Superlinked is integrated, replace the Gemini ranking below
-        # with Superlinked vector-based ranking:
-        #   ranked_signals = await superlinked_rank(all_signals, user_context)
-        # For now, Gemini does the ranking.
-        # -----------------------------
-
-        # 4. Rank top 5 and draft actions with Gemini
-        items = await _rank_and_draft(all_signals, gemini_client)
-
-        # ----- SLNG HOOK -----
-        # TODO: When SLNG is integrated, generate voice audio:
-        #   audio_url = await slng_generate_voice_briefing(items, settings.slng_api_key)
-        # For now, text only.
-        # ----------------------
-
-        briefing = Briefing(
-            generated_at=datetime.now(timezone.utc),
-            total_signals_gathered=len(all_signals),
-            items=items,
-            n8n_triggered=request.n8n_triggered,
+    signals = _internal_signals(request.limit)
+    if request.include_external:
+        signals.extend(await _external_signals(signals, request.limit))
+    signals.sort(key=_signal_priority, reverse=True)
+    items = [
+        BriefingItem(
+            rank=index,
+            signal=signal,
+            drafted_action=_action_for(signal),
+            reasoning="Ranked from the current CRM workload, deadlines, revenue and relationship risk.",
+            urgency=min(100, _signal_priority(signal)),
         )
+        for index, signal in enumerate(signals[: request.limit], start=1)
+    ]
+    briefing = Briefing(
+        generated_at=platform_db.utc_now(),
+        total_signals_gathered=len(signals),
+        items=items,
+    )
+    with platform_db.connect() as conn:
+        conn.execute(
+            """INSERT INTO app_settings(key,value_json,updated_at) VALUES('latest_briefing',?,?)
+               ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at""",
+            (briefing.model_dump_json(), platform_db.utc_now().isoformat()),
+        )
+    return briefing
 
-        _latest_briefing = briefing
-        return briefing
-
-    finally:
-        await attio_client.close()
-        await tavily_client.close()
-
-
-# ---------------------------------------------------------------------------
-# Approve action → write back to Attio
-# ---------------------------------------------------------------------------
 
 async def approve_action(request: ApproveActionRequest) -> ApproveActionResponse:
-    """Approve a briefing item's action and optionally create an Attio task."""
     briefing = get_latest_briefing()
     if not briefing:
-        return ApproveActionResponse(success=False, message="No briefing generated yet.")
+        return ApproveActionResponse(success=False, message="No briefing generated yet")
     if request.item_index < 0 or request.item_index >= len(briefing.items):
-        return ApproveActionResponse(success=False, message="Invalid item index.")
-
+        return ApproveActionResponse(success=False, message="Invalid item index")
     item = briefing.items[request.item_index]
-    action_text = request.action_text or item.drafted_action
+    title = (request.action_text or item.drafted_action).strip()
+    with platform_db.connect() as conn:
+        task = core_service.create_task(
+            conn,
+            TaskCreate(
+                entity_type=item.signal.entity_type,
+                entity_id=item.signal.entity_id,
+                title=title,
+                priority="High" if item.urgency >= 75 else "Medium",
+            ),
+        )
+    return ApproveActionResponse(success=True, message=f"Task #{task['id']} created", task_created=True)
 
-    # Write task to Attio if we have a record ID
-    if item.signal.attio_record_id and item.signal.attio_object_slug:
-        settings = EnrichmentSettings()
-        if settings.attio_api_token:
-            attio_client = AttioClient(settings)
+
+def _internal_signals(limit: int) -> list[BriefingSignal]:
+    with platform_db.connect() as conn:
+        summary = core_service.dashboard(conn)
+        signals = []
+        for item in summary["action_items"][:limit]:
+            item_type = item.get("type", "record")
+            signals.append(
+                BriefingSignal(
+                    type="internal",
+                    source="local",
+                    company_name=item.get("buyer_name") or item.get("title") or "CRM Workspace",
+                    headline=item.get("title") or item.get("subject") or "Action required",
+                    detail=item.get("reason") or item.get("description") or item.get("next_action") or item.get("deadline") or "Open the linked record for context.",
+                    entity_type=item_type,
+                    entity_id=item.get("id"),
+                )
+            )
+        if not signals:
+            for row in conn.execute(
+                """SELECT o.id,o.title,a.name,o.next_action,o.value_minor
+                   FROM opportunities o JOIN accounts a ON a.id=o.account_id
+                   JOIN pipeline_stages s ON s.id=o.stage_id
+                   WHERE o.archived_at IS NULL AND s.kind='open'
+                   ORDER BY o.value_minor DESC LIMIT ?""",
+                (limit,),
+            ):
+                signals.append(
+                    BriefingSignal(
+                        type="internal", source="local", company_name=row["name"],
+                        headline=row["title"], detail=row["next_action"] or "Review the next deal action",
+                        entity_type="opportunity", entity_id=row["id"],
+                    )
+                )
+    return signals
+
+
+async def _external_signals(internal: list[BriefingSignal], limit: int) -> list[BriefingSignal]:
+    settings = EnrichmentSettings()
+    if not settings.tavily_api_key or settings.tavily_api_key.lower().startswith("your_"):
+        return []
+    client = TavilyClient(settings)
+    result: list[BriefingSignal] = []
+    try:
+        for name in list(dict.fromkeys(signal.company_name for signal in internal))[: min(limit, 5)]:
             try:
-                await attio_client.create_task(
-                    item.signal.attio_object_slug,
-                    item.signal.attio_record_id,
-                    f"Daybreak action: {item.signal.company_name}",
-                    action_text,
-                )
-                return ApproveActionResponse(
-                    success=True,
-                    message=f"Task created in Attio for {item.signal.company_name}",
-                    attio_task_created=True,
-                )
-            finally:
-                await attio_client.close()
+                rows = await client.search(f"{name} recent procurement business news", max_results=2)
+            except Exception:
+                continue
+            for row in rows:
+                if row.get("title"):
+                    result.append(
+                        BriefingSignal(
+                            type="external", source="tavily", company_name=name,
+                            headline=row["title"], detail=(row.get("content") or row.get("snippet") or "")[:500],
+                            source_url=row.get("url"),
+                        )
+                    )
+    finally:
+        await client.close()
+    return result
 
-    return ApproveActionResponse(
-        success=True,
-        message=f"Action approved: {action_text}",
-        attio_task_created=False,
-    )
+
+def _signal_priority(signal: BriefingSignal) -> int:
+    text = f"{signal.headline} {signal.detail}".lower()
+    score = 50
+    if any(word in text for word in ("overdue", "deadline", "blocked", "at risk")):
+        score += 35
+    if any(word in text for word in ("invoice", "payment", "proposal", "tender")):
+        score += 10
+    return min(score, 100)
+
+
+def _action_for(signal: BriefingSignal) -> str:
+    if signal.entity_type == "task":
+        return f"Complete or reschedule: {signal.headline}"
+    if signal.entity_type == "tender":
+        return f"Review the tender deadline and decide the next bid action for {signal.company_name}"
+    if signal.entity_type == "opportunity":
+        return f"Advance the next deal action for {signal.company_name}"
+    return f"Review and act on: {signal.headline}"

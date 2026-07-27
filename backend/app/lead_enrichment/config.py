@@ -1,31 +1,17 @@
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.integrations_v1.secrets import (
+    GEMINI_API_KEY,
+    TAVILY_API_KEY,
+    CredentialStore,
+    CredentialStoreUnavailable,
+    application_credential_store,
+)
+
 
 class EnrichmentSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
-
-    attio_api_token: str = ""
-    attio_base_url: str = "https://api.attio.com"
-    attio_lead_list_id: str = ""
-    attio_lead_object: str = "companies"
-    attio_company_object: str = "companies"
-    attio_person_object: str = "people"
-
-    attio_company_name_attribute: str = "name"
-    attio_company_domain_attribute: str = "domains"
-    attio_person_name_attribute: str = "name"
-    attio_person_email_attribute: str = "email_addresses"
-    attio_person_phone_attribute: str = "phone_numbers"
-    attio_person_company_attribute: str = "company"
-    attio_default_phone_country_code: str = "GB"
-    attio_enrichment_summary_attribute: str = "lead_enrichment_summary"
-    attio_fit_score_attribute: str = "lead_fit_score"
-    attio_urgency_score_attribute: str = "lead_urgency_score"
-    attio_confidence_score_attribute: str = "lead_enrichment_confidence"
-    attio_fingerprint_attribute: str = "lead_enrichment_fingerprint"
-    attio_source_urls_attribute: str = "lead_enrichment_source_urls"
-    attio_enriched_at_attribute: str = "lead_enriched_at"
 
     tavily_api_key: str = ""
     tavily_base_url: str = "https://api.tavily.com"
@@ -35,6 +21,17 @@ class EnrichmentSettings(BaseSettings):
 
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.5-flash"
+
+    def __init__(self, **values) -> None:
+        credential_store = values.pop("_credential_store", None)
+        # Provider secrets are never accepted from process or dotenv
+        # configuration; Windows Credential Manager is authoritative.
+        values.pop("tavily_api_key", None)
+        values.pop("gemini_api_key", None)
+        super().__init__(**values)
+        self.tavily_api_key = ""
+        self.gemini_api_key = ""
+        self._load_credentials(credential_store or application_credential_store())
 
     @field_validator("gemini_model")
     @classmethod
@@ -46,7 +43,7 @@ class EnrichmentSettings(BaseSettings):
     enrichment_classifier_version: str = "gemini-v1"
     enrichment_timeout_seconds: float = 30.0
     enrichment_max_retries: int = 3
-    enrichment_attio_concurrency: int = 2
+    enrichment_local_concurrency: int = 2
     enrichment_tavily_concurrency: int = 3
     enrichment_llm_concurrency: int = 2
     enrichment_create_tasks: bool = True
@@ -62,41 +59,31 @@ class EnrichmentSettings(BaseSettings):
     discovery_search_depth: str = "advanced"
     discovery_basic_extract_depth: str = "basic"
     discovery_advanced_extract_depth: str = "advanced"
-    discovery_company_object: str = "companies"
-    discovery_domain_matching_attribute: str = "domains"
-    attio_discovery_write_custom_attributes: bool = False
-    attio_discovery_summary_attribute: str = ""
-    attio_discovery_confidence_attribute: str = ""
-    attio_discovery_source_urls_attribute: str = ""
-    attio_discovery_fingerprint_attribute: str = ""
-    attio_discovery_niche_attribute: str = ""
-    attio_discovery_region_attribute: str = ""
 
     def require_read_keys(self) -> None:
-        missing = []
-        if _is_placeholder(self.attio_api_token):
-            missing.append("ATTIO_API_TOKEN")
-        if _is_placeholder(self.tavily_api_key):
-            missing.append("TAVILY_API_KEY")
-        if _is_placeholder(self.gemini_api_key):
-            missing.append("GEMINI_API_KEY")
-        if missing:
-            raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
-
-    def require_attio_key(self) -> None:
-        if _is_placeholder(self.attio_api_token):
-            raise ValueError("Missing required environment variables: ATTIO_API_TOKEN")
+        self._require_tavily_key()
 
     def require_discovery_keys(self) -> None:
-        missing = []
-        if _is_placeholder(self.attio_api_token):
-            missing.append("ATTIO_API_TOKEN")
+        self._require_tavily_key()
+
+    def _require_tavily_key(self) -> None:
         if _is_placeholder(self.tavily_api_key):
-            missing.append("TAVILY_API_KEY")
-        if _is_placeholder(self.gemini_api_key):
-            missing.append("GEMINI_API_KEY")
-        if missing:
-            raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+            raise ValueError("Missing required credential: TAVILY_API_KEY")
+
+    @property
+    def gemini_configured(self) -> bool:
+        return not _is_placeholder(self.gemini_api_key)
+
+    def _load_credentials(self, store: CredentialStore) -> None:
+        try:
+            tavily = store.get(TAVILY_API_KEY)
+            gemini = store.get(GEMINI_API_KEY)
+        except CredentialStoreUnavailable:
+            return
+        if tavily:
+            self.tavily_api_key = tavily
+        if gemini:
+            self.gemini_api_key = gemini
 
 
 def _is_placeholder(value: str) -> bool:
